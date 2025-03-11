@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Func
 
 # Local imports
 from app.config import get_settings
-from app.core.security import get_api_key
+# No need to import security module for simplified approach
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -67,8 +67,8 @@ class LLMFactory:
         """
         settings = get_settings()
         
-        # Get the API key for the specified provider
-        api_key = get_api_key(provider.value)
+        # Simplified approach without security module
+        api_key = os.environ.get(f"{provider.value.upper()}_API_KEY")
         
         if provider == LLMProvider.OPENAI:
             # Default model if not specified
@@ -126,16 +126,18 @@ def get_llm() -> BaseChatModel:
     Returns:
         An instance of the configured LLM
     """
-    settings = get_settings()
+    # Simplified approach to get settings
+    # Use environment variables directly with fallbacks
+    provider_str = os.environ.get("LLM_PROVIDER", "openai").lower()
+    model_name = os.environ.get("LLM_MODEL_NAME", None)
+    temperature = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
     
-    # Get LLM configuration from settings
-    provider = getattr(settings, "LLM_PROVIDER", LLMProvider.OPENAI)
-    model_name = getattr(settings, "LLM_MODEL_NAME", None)
-    temperature = getattr(settings, "LLM_TEMPERATURE", 0.7)
-    
-    # Convert string provider to enum if needed
-    if isinstance(provider, str):
-        provider = LLMProvider(provider)
+    # Convert string provider to enum
+    try:
+        provider = LLMProvider(provider_str)
+    except ValueError:
+        logger.warning(f"Invalid provider: {provider_str}, falling back to OpenAI")
+        provider = LLMProvider.OPENAI
     
     # Create the LLM using the factory
     try:
