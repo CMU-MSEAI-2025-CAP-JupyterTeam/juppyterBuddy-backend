@@ -4,8 +4,11 @@ import logging
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 import openai
+from openai import OpenAI
 import requests
 import json
+import asyncio
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -20,10 +23,11 @@ class LLMService:
         # OpenAI configuration
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if self.openai_api_key:
-            openai.api_key = self.openai_api_key
+            self.openai_client = OpenAI(api_key=self.openai_api_key)
             logger.info("OpenAI API key loaded")
         else:
             logger.warning("OpenAI API key not found in environment variables")
+            self.openai_client = None
         
         # Other LLM providers could be added here
         self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -48,7 +52,7 @@ class LLMService:
         model = model or self.default_model
         
         # Determine which provider to use based on model name or config
-        if model.startswith("gpt-") and self.openai_api_key:
+        if model.startswith("gpt-") and self.openai_client:
             return await self._generate_openai_response(messages, model)
         elif model.startswith("claude-") and self.anthropic_api_key:
             return await self._generate_anthropic_response(messages, model)
@@ -78,19 +82,26 @@ For example, if a user asks to create a pandas dataframe, respond with a message
             }
             
             # Ensure system message is first in the list
-            if messages and messages[0].get("role") != "system":
+            if not messages or messages[0].get("role") != "system":
                 messages = [system_message] + messages
             
-            # Call OpenAI API
-            response = await openai.ChatCompletion.acreate(
-                model=model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1000
+            # Call OpenAI API using the new client
+            # Use run_in_executor to make the synchronous API call in a separate thread
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=1000
+                )
             )
             
-            # Extract actions based on content (a simple heuristic approach)
+            # Extract content from the response
             content = response.choices[0].message.content
+            
+            # Extract actions based on content
             actions = self._extract_actions_from_content(content)
             
             return {
@@ -128,9 +139,12 @@ For example, if a user asks to create a pandas dataframe, respond with a message
                 "max_tokens": 1000
             }
             
-            # Call Anthropic API
-            response = requests.post(url, headers=headers, json=data)
-            response_data = response.json()
+            # Call Anthropic API - using aiohttp would be better for async
+            loop = asyncio.get_running_loop()
+            response_data = await loop.run_in_executor(
+                None,
+                lambda: requests.post(url, headers=headers, json=data).json()
+            )
             
             # Extract content
             content = response_data.get("content", [{"text": "No response"}])[0]["text"]
@@ -176,7 +190,6 @@ For example, if a user asks to create a pandas dataframe, respond with a message
         actions = []
         
         # Look for Python code blocks
-        import re
         code_blocks = re.findall(r'```(?:python)?\s*(.*?)\s*```', content, re.DOTALL)
         
         for i, code in enumerate(code_blocks):
