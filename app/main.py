@@ -8,24 +8,27 @@ from app.api.routes import router as api_router
 from app.api.websocket import router as websocket_router
 
 # Configure logging for the application
+# Logs messages to STDOUT with a custom format
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+# Create a logger for the main module
 logger = logging.getLogger(__name__)
 
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Context manager for FastAPI application startup and shutdown events.
-    This replaces the deprecated on_event handlers.
+    Context manager for FastAPI application startup and shutdown events using async generators.
+    i.e. code that runs before the application starts and after it shuts down.
     """
     # Startup code - runs before the application starts accepting requests
     logger.info("Starting up JupyterBuddy backend")
     
     # Yield control to FastAPI to handle requests
-    yield
+    yield # The application starts running here
     
     # Shutdown code - runs when the application is shutting down
     logger.info("Shutting down JupyterBuddy backend")
@@ -50,9 +53,9 @@ app.add_middleware(
 
 # Include API routers with their prefixes
 app.include_router(
-    api_router, 
-    prefix="/api/v1",
-    tags=["api"]
+    api_router,  # Include the API router
+    prefix="/api/v1", # All routes inside this router will start with `/api/v1`
+    tags=["api"] # Add tags to categorize the routes (for documentation in Swagger UI)
 )
 
 # Include WebSocket router (no prefix needed)
