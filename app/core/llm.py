@@ -6,11 +6,12 @@ from dotenv import load_dotenv
 import asyncio
 import re
 
-# LangChain imports
-from langchain.chat_models import ChatOpenAI, ChatAnthropic
-from langchain.schema import HumanMessage, AIMessage, SystemMessage, BaseMessage
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+# LangChain imports with correct package paths
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+from langchain_core.callbacks.manager import CallbackManager
+from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 
 # Load environment variables from .env file
 load_dotenv()
@@ -120,7 +121,7 @@ class LLMService:
             model = ChatOpenAI(
                 model_name=model_name,
                 temperature=0.7,
-                openai_api_key=os.getenv("OPENAI_API_KEY"),
+                api_key=os.getenv("OPENAI_API_KEY"),
                 streaming=False
             )
         elif provider == "anthropic":
