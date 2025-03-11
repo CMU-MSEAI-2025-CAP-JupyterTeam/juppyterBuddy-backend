@@ -27,6 +27,7 @@ class LLMService:
     multiple providers in the same application.
     """
     
+    # Initialize the LLM service
     def __init__(self):
         """Initialize the LLM service with available models from environment variables."""
         # Initialize available models dict
@@ -67,7 +68,8 @@ class LLMService:
                 logger.warning(f"Default model not available, using {self.default_model} instead")
             else:
                 logger.error("No models available. Check API keys.")
-    
+                
+    # Convert message dictionaries to LangChain message objects
     def _get_langchain_messages(self, messages: List[Dict[str, str]]) -> List[BaseMessage]:
         """
         Convert dict messages to LangChain message objects.
@@ -95,6 +97,7 @@ class LLMService:
         
         return langchain_messages
     
+    # Get or create model instance
     def _get_model_instance(self, model_name: str):
         """
         Get or create a LangChain model instance for the specified model.
@@ -138,6 +141,7 @@ class LLMService:
         self.model_instances[model_name] = model
         return model
     
+    # Generate model response
     async def generate_response(self, 
                                messages: List[Dict[str, str]], 
                                model: Optional[str] = None) -> Dict[str, Any]:
@@ -192,6 +196,7 @@ class LLMService:
                 "actions": []
             }
     
+    # Extract actions from content
     def _extract_actions(self, content: str) -> List[Dict[str, Any]]:
         """
         Extract actions from the content.
@@ -223,6 +228,7 @@ class LLMService:
         
         return actions
     
+    # Get default system prompt
     def _get_default_system_prompt(self) -> str:
         """
         Get the default system prompt for JupyterBuddy.
@@ -242,6 +248,7 @@ When users ask for code:
 For example, if a user asks to create a pandas dataframe, respond with a message explaining
 what you're doing and include the Python code in a code block."""
     
+    # Get available models
     def get_available_models(self) -> List[str]:
         """
         Get a list of available models.
