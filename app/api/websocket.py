@@ -1,10 +1,10 @@
 # app/api/websocket.py
 import json
 import logging
-import asyncio
-from typing import Dict, Any
+import asyncio # Used to handle asynchronous tasks
+from typing import Dict, Any # Import Dict and Any types
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from uuid import uuid4
+from uuid import uuid4 # Generate unique IDs for messages
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ async def process_message(message: Dict[str, Any], notebook_context: Dict[str, A
     Process a message and return a response.
     This is a simplified implementation without using the LLM yet.
     """
-    content = message.get("content", "").lower()
+    content = message.get("content", "").lower() # Return empty string if content is not present
     
     # Handle create cell commands
     if "create" in content and "cell" in content:
@@ -94,7 +94,8 @@ async def process_message(message: Dict[str, Any], notebook_context: Dict[str, A
         "content": "I'm here to help with your notebook. You can ask me to create cells, run code, or update cells.",
         "id": str(uuid4())
     }
-
+    
+# Define WebSocket endpoint
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
