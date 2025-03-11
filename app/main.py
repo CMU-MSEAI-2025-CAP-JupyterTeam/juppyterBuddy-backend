@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 from contextlib import asynccontextmanager
 
+# Import routers from other modules
 from app.api.routes import router as api_router
 from app.api.websocket import router as websocket_router
 
