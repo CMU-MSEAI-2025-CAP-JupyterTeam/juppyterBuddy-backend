@@ -2,40 +2,82 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from contextlib import asynccontextmanager
 
 from app.api.routes import router as api_router
 from app.api.websocket import router as websocket_router
 
-# Configure logging
+# Configure logging for the application
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="JupyterBuddy Backend")
+# Define lifespan context manager for startup and shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Context manager for FastAPI application startup and shutdown events.
+    This replaces the deprecated on_event handlers.
+    """
+    # Startup code - runs before the application starts accepting requests
+    logger.info("Starting up JupyterBuddy backend")
+    
+    # Yield control to FastAPI to handle requests
+    yield
+    
+    # Shutdown code - runs when the application is shutting down
+    logger.info("Shutting down JupyterBuddy backend")
 
-# Set up CORS - important for allowing the frontend to connect
+# Initialize FastAPI application with lifespan handler
+app = FastAPI(
+    title="JupyterBuddy Backend",
+    description="Backend service for JupyterBuddy - a conversational assistant for JupyterLab",
+    version="0.1.0",
+    lifespan=lifespan
+)
+
+# Set up CORS middleware to allow frontend to connect to the backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For development - restrict this in production
+    # Allow all origins during development - restrict in production
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(api_router, prefix="/api/v1")
-app.include_router(websocket_router)
+# Include API routers with their prefixes
+app.include_router(
+    api_router, 
+    prefix="/api/v1",
+    tags=["api"]
+)
 
-@app.get("/health")
+# Include WebSocket router (no prefix needed)
+app.include_router(
+    websocket_router,
+    tags=["websocket"]
+)
+
+# Health check endpoint to verify service is running
+@app.get("/health", tags=["health"])
 async def health_check():
+    """
+    Simple health check endpoint that returns a success status.
+    Useful for monitoring and deployment checks.
+    """
     return {"status": "healthy"}
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting up JupyterBuddy backend")
-
+# Run the server if this file is executed directly
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    # Start the server with hot-reload enabled for development
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=True,
+        log_level="info"
+    )
