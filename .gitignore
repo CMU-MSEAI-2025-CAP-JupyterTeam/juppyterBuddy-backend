@@ -1,5 +1,23 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+/app/__pycache__/
+/app/.pytest_cache/
+/app/.mypy_cache/
+/app/.tox/
+/app/.venv/
+/app/.env/
+/app/.pdm/
+/app/.pdm-python/
+/app/.pdm-build/
+/app/.pytest_cache/
+/app/.mypy_cache/
+/app/.tox/
+/app/.venv/
+/app/.env/
+/app/.pdm/
+/app/.pdm-python/
+
+# C extensions
 *.py[cod]
 *$py.class
 
@@ -172,3 +190,4 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
