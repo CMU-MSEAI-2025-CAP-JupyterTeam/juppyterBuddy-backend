@@ -141,6 +141,26 @@ class LLMService:
         self.model_instances[model_name] = model
         return model
     
+    # Get the default system prompt
+    def _get_default_system_prompt(self) -> str:
+        """
+        Get the default system prompt for JupyterBuddy.
+        
+        Returns:
+            System prompt string
+        """
+        return """You are JupyterBuddy, an AI assistant integrated into JupyterLab.
+You can help users by creating, executing, and updating notebook cells.
+When a user asks you to create, run, or manipulate notebook cells, respond with the appropriate actions.
+
+When users ask for code:
+1. Include the code in ```python code blocks```
+2. Provide clear explanations of what the code does
+3. Use best practices and modern libraries (pandas, numpy, matplotlib, etc.)
+
+For example, if a user asks to create a pandas dataframe, respond with a message explaining
+what you're doing and include the Python code in a code block."""
+    
     # Generate model response
     async def generate_response(self, 
                                messages: List[Dict[str, str]], 
@@ -227,26 +247,6 @@ class LLMService:
             })
         
         return actions
-    
-    # Get default system prompt
-    def _get_default_system_prompt(self) -> str:
-        """
-        Get the default system prompt for JupyterBuddy.
-        
-        Returns:
-            System prompt string
-        """
-        return """You are JupyterBuddy, an AI assistant integrated into JupyterLab.
-You can help users by creating, executing, and updating notebook cells.
-When a user asks you to create, run, or manipulate notebook cells, respond with the appropriate actions.
-
-When users ask for code:
-1. Include the code in ```python code blocks```
-2. Provide clear explanations of what the code does
-3. Use best practices and modern libraries (pandas, numpy, matplotlib, etc.)
-
-For example, if a user asks to create a pandas dataframe, respond with a message explaining
-what you're doing and include the Python code in a code block."""
     
     # Get available models
     def get_available_models(self) -> List[str]:
