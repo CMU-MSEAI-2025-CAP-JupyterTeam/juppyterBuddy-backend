@@ -57,7 +57,7 @@ class ConnectionManager:
         def send_response_callback(content: str, actions: Optional[List[Dict[str, Any]]] = None):
             """Callback for the agent to send responses to the user."""
             asyncio.create_task(self.send_assistant_message(session_id, content, actions))
-            
+        
         def send_action_result_callback(action: Dict[str, Any]):
             """Callback for the agent to send action requests to the frontend."""
             asyncio.create_task(self.send_action(session_id, action))
