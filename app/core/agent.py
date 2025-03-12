@@ -62,6 +62,13 @@ When working with users, follow these guidelines:
 - When suggesting code, ensure it's correct, efficient, and follows best practices
 - When you make changes to the notebook, explain what you did
 
+When handling system errors:
+- Translate technical errors into user-friendly language
+- Focus on solutions rather than problems
+- Suggest next steps the user can take
+- Don't blame the user for system or API issues
+- If appropriate, offer to try an alternative approach
+
 Current notebook context:
 {notebook_context}
 
@@ -295,11 +302,28 @@ class JupyterBuddyAgent:
         # Create user message
         user_msg = HumanMessage(content=user_message)
         
-        # Create function message with the result
-        function_msg = FunctionMessage(
-            name=result.get("action_type", "UNKNOWN_ACTION").lower(),
-            content=json.dumps(result.get("result", {}))
-        )
+        # Handle SYSTEM_ERROR specially with additional context
+        if result.get("action_type") == "SYSTEM_ERROR":
+            error_info = result.get("result", {})
+            error_type = error_info.get("error_type", "unknown")
+            error_message = error_info.get("message", "An unknown error occurred")
+            
+            # Create a specific function message for system errors
+            function_msg = FunctionMessage(
+                name="system_error",
+                content=json.dumps({
+                    "error_type": error_type,
+                    "message": error_message,
+                    "context": "This is a system error that occurred while processing a message. " +
+                              "Please inform the user in a friendly way and suggest what they might do next."
+                })
+            )
+        else:
+            # Standard function message for normal action results
+            function_msg = FunctionMessage(
+                name=result.get("action_type", "UNKNOWN_ACTION").lower(),
+                content=json.dumps(result.get("result", {}))
+            )
         
         # Create initial state with the action result
         state = {
