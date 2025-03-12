@@ -23,12 +23,6 @@ staying open indefinitely. By having a single instance, JupyterBuddy ensures
 efficient session management while maintaining user independence.
 """
 
-"""
-JupyterBuddy WebSocket Module
-
-This module handles the WebSocket connections for real-time communication between
-the frontend and backend. It implements the message handling and response loops.
-"""
 import json
 import logging
 from typing import Dict, List, Any, Optional
@@ -59,18 +53,17 @@ class ConnectionManager:
     _instance = None
 
     def __new__(cls):
-        """Create a new singleton instance if none exists."""  # initialize once for all instances/users
+        """Create a new singleton instance if none exists."""
         if cls._instance is None:
             cls._instance = super(ConnectionManager, cls).__new__(cls)
             # Initialize instance attributes without inline type annotations
-            cls._instance.active_connections = {}  # {session_id: WebSocket}
-            cls._instance.user_agents = {}  # {session_id: JupyterBuddyAgent}
-            cls._instance.latest_messages = {}  # {session_id: str}
-            cls._instance.notebook_contexts = {}  # {session_id: NotebookContext}
+            cls._instance.active_connections = {}
+            cls._instance.user_agents = {}
+            cls._instance.latest_messages = {}
+            cls._instance.notebook_contexts = {}
 
         return cls._instance
 
-    # WebSocket connection methods
     async def connect(self, websocket: WebSocket, session_id: str):
         """
         Connect a new WebSocket client.
@@ -106,7 +99,6 @@ class ConnectionManager:
             session_id, "Connected to JupyterBuddy. How can I help you today?"
         )
 
-    # WebSocket disconnection method
     async def disconnect(self, session_id: str):
         """
         Disconnect a WebSocket client.
@@ -125,7 +117,6 @@ class ConnectionManager:
 
         logger.info(f"Client disconnected: {session_id}")
 
-    # Message sending methods
     async def send_message(self, session_id: str, message: Dict[str, Any]):
         """
         Send a message to a specific client.
@@ -137,7 +128,6 @@ class ConnectionManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_text(json.dumps(message))
 
-    # Message types
     async def send_system_message(self, session_id: str, content: str):
         """
         Send a system message to a specific client.
@@ -148,7 +138,6 @@ class ConnectionManager:
         """
         await self.send_message(session_id, {"type": "system", "content": content})
 
-    # Assistant message with optional actions
     async def send_assistant_message(
         self,
         session_id: str,
@@ -167,7 +156,6 @@ class ConnectionManager:
             session_id, {"type": "assistant", "content": content, "actions": actions}
         )
 
-    # Action requests
     async def send_action(self, session_id: str, action: Dict[str, Any]):
         """
         Send an action request to the frontend.
@@ -178,7 +166,6 @@ class ConnectionManager:
         """
         await self.send_message(session_id, {"type": "action", "action": action})
 
-    # Message processing methods
     def process_user_message(
         self,
         session_id: str,
@@ -204,7 +191,6 @@ class ConnectionManager:
             # Process the message with the agent
             agent.handle_message(content, notebook_context)
 
-    # Action result processing
     def process_action_result(self, session_id: str, result: Dict[str, Any]):
         """
         Process the result of an action from the frontend.
@@ -228,7 +214,6 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 
-# WebSocket endpoint
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """
@@ -282,25 +267,58 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 else:
                     # Unknown message type
                     logger.warning(f"Received unknown message type from {session_id}")
-                    await connection_manager.send_system_message(
+                    # Send error to LLM to handle instead of direct system message
+                    await connection_manager.send_message(
                         session_id,
-                        "Sorry, I couldn't understand that message. Please try again.",
+                        {
+                            "type": "action_result",
+                            "action_result": {
+                                "action_type": "SYSTEM_ERROR",
+                                "result": {
+                                    "error_type": "unknown_message",
+                                    "message": "Received an unknown message format",
+                                },
+                                "success": False,
+                            },
+                        },
                     )
 
             except json.JSONDecodeError:
                 # Invalid JSON
                 logger.error(f"Received invalid JSON from {session_id}")
-                await connection_manager.send_system_message(
+                # Send error to LLM to handle instead of direct system message
+                await connection_manager.send_message(
                     session_id,
-                    "Sorry, I received an invalid message. Please try again.",
+                    {
+                        "type": "action_result",
+                        "action_result": {
+                            "action_type": "SYSTEM_ERROR",
+                            "result": {
+                                "error_type": "invalid_json",
+                                "message": "Received invalid JSON format",
+                            },
+                            "success": False,
+                        },
+                    },
                 )
 
             except Exception as e:
                 # Other errors
                 logger.exception(f"Error processing message from {session_id}: {e}")
-                await connection_manager.send_system_message(
+                # Send error to LLM to handle instead of direct system message
+                await connection_manager.send_message(
                     session_id,
-                    "Sorry, an error occurred while processing your message. Please try again.",
+                    {
+                        "type": "action_result",
+                        "action_result": {
+                            "action_type": "SYSTEM_ERROR",
+                            "result": {
+                                "error_type": "general_error",
+                                "message": str(e),
+                            },
+                            "success": False,
+                        },
+                    },
                 )
 
     except WebSocketDisconnect:
