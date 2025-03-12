@@ -218,28 +218,32 @@ class JupyterBuddyAgent:
             tool_args = tool_call.get("args", {})
             
             try:
-                # Execute the tool (this returns a response but we don't need it
-                # for the agent decision-making, only for debugging)
-                tool_response = self.tool_executor.execute(
+                # Execute the tool - with our updated tools, this returns a payload
+                # that can be sent directly to the frontend
+                tool_result = self.tool_executor.execute(
                     tool_name=tool_name,
                     tool_input=tool_args
                 )
                 
-                # Log the tool response for debugging
-                logger.debug(f"Tool response: {tool_response}")
-                
-                # Convert to the expected action format for frontend
-                action_payload = {
-                    "action_type": tool_name.upper(),
-                    "payload": tool_args
-                }
-                
-                # Send action directly to frontend
-                self.send_action(action_payload)
+                # Log the tool result for debugging
+                logger.debug(f"Tool result: {tool_result}")
                 
             except Exception as e:
+                # If there's an exception during tool execution, create an error result
                 logger.error(f"Error executing tool {tool_name}: {e}")
-                # Even on error, we continue with other tools
+                tool_result = {
+                    "action_type": "SYSTEM_ERROR",
+                    "payload": {
+                        "error_type": "tool_execution_error",
+                        "message": f"Error executing {tool_name}: {str(e)}",
+                        "original_tool": tool_name,
+                        "original_args": tool_args
+                    }
+                }
+            
+            # Send the tool result to the frontend - this happens whether the tool
+            # execution succeeded or failed
+            self.send_action(tool_result)
         
         # If LLM provided a message for the user along with the tool calls, send it
         if state.get("output_to_user"):
