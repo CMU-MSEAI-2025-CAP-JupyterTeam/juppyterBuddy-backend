@@ -20,20 +20,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# API key request model
-class APIKeyRequest(BaseModel):
-    """Request model for setting an API key."""
-
-    provider: str
-    api_key: str
-
-
 # Health check response model
 class HealthResponse(BaseModel):
     """Response model for health check."""
 
     status: str
     version: str
+
+
+# Define a route for the root endpoint
+@router.get("/")
+async def root():
+    return {"message": "Welcome to JupyterBuddy API"}
 
 
 # Add a new route for health check
@@ -52,6 +50,12 @@ async def health_check():
 # # local imports
 # from app.core.security import store_api_key, get_api_key
 
+# # API key request model
+# class APIKeyRequest(BaseModel):
+#     """Request model for setting an API key."""
+
+#     provider: str
+#     api_key: str
 
 # # API key response model
 # class APIKeyResponse(BaseModel):
