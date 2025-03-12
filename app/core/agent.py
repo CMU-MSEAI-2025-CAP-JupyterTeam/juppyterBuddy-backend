@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
 # Type definitions for state management
 class AgentState(TypedDict):
     """Type definition for the agent's state"""
-    conversation: Conversation
+    conversation: Conversation # Full Chat History (Persistent)
     notebook_context: Optional[Dict[str, Any]]
-    messages: List[Union[SystemMessage, HumanMessage, AIMessage, FunctionMessage]]
+    messages: List[Union[SystemMessage, HumanMessage, AIMessage, FunctionMessage]] # Current Step Only  message(Temporary)
     current_tool_calls: List[Dict[str, Any]]
     output_to_user: Optional[str]
     should_use_tool: bool
