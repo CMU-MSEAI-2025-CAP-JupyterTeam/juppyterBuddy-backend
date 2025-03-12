@@ -69,6 +69,7 @@ class ConnectionManager:
             
         return cls._instance
     
+    # WebSocket connection methods
     async def connect(self, websocket: WebSocket, session_id: str):
         """
         Connect a new WebSocket client.
@@ -98,6 +99,7 @@ class ConnectionManager:
         logger.info(f"Client connected: {session_id}")
         await self.send_system_message(session_id, "Connected to JupyterBuddy. How can I help you today?")
     
+    # WebSocket disconnection method
     async def disconnect(self, session_id: str):
         """
         Disconnect a WebSocket client.
@@ -116,6 +118,7 @@ class ConnectionManager:
             
         logger.info(f"Client disconnected: {session_id}")
     
+    # Message sending methods
     async def send_message(self, session_id: str, message: Dict[str, Any]):
         """
         Send a message to a specific client.
@@ -127,6 +130,7 @@ class ConnectionManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_text(json.dumps(message))
     
+    # Message types
     async def send_system_message(self, session_id: str, content: str):
         """
         Send a system message to a specific client.
@@ -140,6 +144,7 @@ class ConnectionManager:
             "content": content
         })
     
+    # Assistant message with optional actions
     async def send_assistant_message(self, session_id: str, content: str, actions: Optional[List[Dict[str, Any]]] = None):
         """
         Send an assistant message to a specific client.
@@ -155,6 +160,7 @@ class ConnectionManager:
             "actions": actions
         })
     
+    # Action requests
     async def send_action(self, session_id: str, action: Dict[str, Any]):
         """
         Send an action request to the frontend.
@@ -168,6 +174,7 @@ class ConnectionManager:
             "action": action
         })
     
+    # Message processing methods
     def process_user_message(self, session_id: str, content: str, notebook_context: Optional[Dict[str, Any]] = None):
         """
         Process a user message by sending it to the agent.
@@ -188,6 +195,7 @@ class ConnectionManager:
             # Process the message with the agent
             agent.handle_message(content, notebook_context)
     
+    # Action result processing
     def process_action_result(self, session_id: str, result: Dict[str, Any]):
         """
         Process the result of an action from the frontend.
@@ -209,6 +217,7 @@ class ConnectionManager:
 # Create a singleton connection manager
 connection_manager = ConnectionManager()
 
+# WebSocket endpoint
 @router.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """
