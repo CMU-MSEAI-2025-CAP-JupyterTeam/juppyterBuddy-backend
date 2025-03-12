@@ -3,7 +3,7 @@ JupyterBuddy Tools Module
 
 This module defines the tools that can be used by the agent to interact with
 the notebook, including creating cells, updating cells, and executing cells.
-These tools are used within the agent loop to take actions on the notebook.
+These tools generate payloads that are sent directly to the frontend for execution.
 """
 import json
 from typing import Dict, Any, Optional, List, Union
@@ -61,11 +61,11 @@ def create_cell_tool(
     cell_type: CellType,
     content: str,
     position: Union[CellPosition, int] = CellPosition.AFTER_ACTIVE
-) -> str:
+) -> Dict[str, Any]:
     """
     Create a new cell in the notebook.
     
-    This tool sends a request to the frontend to create a new cell of the specified type
+    This tool generates a payload for the frontend to create a new cell of the specified type
     with the given content at the specified position.
     
     Args:
@@ -74,73 +74,80 @@ def create_cell_tool(
         position: Where to insert the cell ('start', 'end', 'after_active', 'before_active', or a specific index)
         
     Returns:
-        A message indicating the cell was created
+        Dictionary with action_type and payload for the frontend
     """
-    # This function only creates a payload to be sent to the frontend
-    # The actual cell creation happens in the frontend
-    return json.dumps({
-        "status": "tool_called",
-        "message": f"Will create a {cell_type} cell with position {position}"
-    })
+    # Create a structured payload for the frontend
+    return {
+        "action_type": "CREATE_CELL",
+        "payload": {
+            "cell_type": cell_type,
+            "content": content,
+            "position": position
+        }
+    }
 
 @tool(args_schema=UpdateCellInput)
-def update_cell_tool(cell_index: int, content: str) -> str:
+def update_cell_tool(cell_index: int, content: str) -> Dict[str, Any]:
     """
     Update an existing cell in the notebook.
     
-    This tool sends a request to the frontend to update the content of an existing cell.
+    This tool generates a payload for the frontend to update the content of an existing cell.
     
     Args:
         cell_index: The index of the cell to update
         content: The new content for the cell
         
     Returns:
-        A message indicating the cell was updated
+        Dictionary with action_type and payload for the frontend
     """
-    # This function only creates a payload to be sent to the frontend
-    # The actual cell update happens in the frontend
-    return json.dumps({
-        "status": "tool_called",
-        "message": f"Will update cell at index {cell_index}"
-    })
+    # Create a structured payload for the frontend
+    return {
+        "action_type": "UPDATE_CELL",
+        "payload": {
+            "cell_index": cell_index,
+            "content": content
+        }
+    }
 
 @tool(args_schema=ExecuteCellInput)
-def execute_cell_tool(cell_index: int) -> str:
+def execute_cell_tool(cell_index: int) -> Dict[str, Any]:
     """
     Execute a cell in the notebook.
     
-    This tool sends a request to the frontend to execute a specific cell.
+    This tool generates a payload for the frontend to execute a specific cell.
     
     Args:
         cell_index: The index of the cell to execute
         
     Returns:
-        A message indicating the cell execution was requested
+        Dictionary with action_type and payload for the frontend
     """
-    # This function only creates a payload to be sent to the frontend
-    # The actual cell execution happens in the frontend
-    return json.dumps({
-        "status": "tool_called",
-        "message": f"Will execute cell at index {cell_index}"
-    })
+    # Create a structured payload for the frontend
+    return {
+        "action_type": "EXECUTE_CELL",
+        "payload": {
+            "cell_index": cell_index
+        }
+    }
 
 @tool(args_schema=GetNotebookInfoInput)
-def get_notebook_info_tool(include_cell_content: bool = True) -> str:
+def get_notebook_info_tool(include_cell_content: bool = True) -> Dict[str, Any]:
     """
     Get information about the current notebook.
     
-    This tool sends a request to the frontend to get information about the current notebook,
+    This tool generates a payload for the frontend to get information about the current notebook,
     including the cells, active cell index, and other metadata.
     
     Args:
         include_cell_content: Whether to include the content of each cell in the response
         
     Returns:
-        A message indicating that notebook info was requested
+        Dictionary with action_type and payload for the frontend
     """
-    # This function only creates a payload to be sent to the frontend
-    # The actual notebook info retrieval happens in the frontend
-    return json.dumps({
-        "status": "tool_called",
-        "message": f"Getting notebook info with include_cell_content={include_cell_content}"
-    })
+    # Create a structured payload for the frontend
+    return {
+        "action_type": "GET_NOTEBOOK_INFO",
+        "payload": {
+            "include_cell_content": include_cell_content
+        }
+    }
