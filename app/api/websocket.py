@@ -1,4 +1,30 @@
 """
+JupyterBuddy Conversation Model
+
+This module defines the models for conversations, messages, and message roles.
+Instead of persisting conversation history across notebook restarts, JupyterBuddy 
+treats each Jupyter Notebook instance as a separate user session. 
+
+A new session ID is assigned each time a notebook is opened, and the system 
+analyzes the notebook state at that moment to determine context. When the notebook 
+is closed, the session is discarded, ensuring a stateless approach beyond active sessions.
+
+The `ConnectionManager` follows the Singleton pattern, ensuring that there is only 
+one global instance responsible for managing all active WebSocket connections. 
+
+Even though each notebook session is independent, the Singleton is necessary to:
+- Prevent multiple notebooks from creating duplicate `ConnectionManager` instances.
+- Ensure that all active WebSocket connections are tracked in one place.
+- Avoid memory leaks by properly closing WebSockets when notebooks are closed.
+
+Without the Singleton, each notebook would create its own `ConnectionManager`, 
+leading to duplicate state tracking, inefficient memory use, and WebSockets 
+staying open indefinitely. By having a single instance, JupyterBuddy ensures 
+efficient session management while maintaining user independence.
+"""
+
+
+"""
 JupyterBuddy WebSocket Module
 
 This module handles the WebSocket connections for real-time communication between
@@ -35,10 +61,11 @@ class ConnectionManager:
         """Create a new singleton instance if none exists."""
         if cls._instance is None:
             cls._instance = super(ConnectionManager, cls).__new__(cls)
-            cls._instance.active_connections: Dict[str, WebSocket] = {}
-            cls._instance.user_agents: Dict[str, JupyterBuddyAgent] = {}
-            cls._instance.latest_messages: Dict[str, str] = {}
-            cls._instance.notebook_contexts: Dict[str, Dict[str, Any]] = {}
+            # Initialize instance attributes without inline type annotations
+            cls._instance.active_connections = {}
+            cls._instance.user_agents = {}
+            cls._instance.latest_messages = {}
+            cls._instance.notebook_contexts = {}
             
         return cls._instance
     
@@ -57,7 +84,7 @@ class ConnectionManager:
         def send_response_callback(content: str, actions: Optional[List[Dict[str, Any]]] = None):
             """Callback for the agent to send responses to the user."""
             asyncio.create_task(self.send_assistant_message(session_id, content, actions))
-        
+            
         def send_action_result_callback(action: Dict[str, Any]):
             """Callback for the agent to send action requests to the frontend."""
             asyncio.create_task(self.send_action(session_id, action))
