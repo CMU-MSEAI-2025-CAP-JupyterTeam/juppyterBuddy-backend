@@ -22,7 +22,6 @@ from langgraph.prebuilt import ToolExecutor
 
 # Local imports
 from app.core.llm import get_llm
-from app.models.conversation import Conversation, Message, MessageRole
 from app.core.tools import (
     create_cell_tool,
     update_cell_tool,
@@ -36,7 +35,6 @@ logger = logging.getLogger(__name__)
 # Type definitions for state management
 class AgentState(TypedDict):
     """Type definition for the agent's state"""
-    conversation: Conversation
     notebook_context: Optional[Dict[str, Any]]
     messages: List[BaseMessage]
     output_to_user: Optional[str]
@@ -191,21 +189,19 @@ class JupyterBuddyAgent:
     def should_use_tool(self, state: AgentState) -> bool:
         """Check if a tool was executed."""
         return state.get("should_use_tool", False)
-
+    
     def handle_message(self, user_message: str, notebook_context: Optional[Dict[str, Any]] = None):
         """Handles new user messages and runs the agent graph."""
+        
         formatted_context = "No active notebook" if notebook_context is None else json.dumps(notebook_context, indent=2)
         system_message = SystemMessage(content=SYSTEM_PROMPT.format(notebook_context=formatted_context))
 
-        # ✅ Directly use conversation history
-        messages = self.latest_conversation["messages"] + [HumanMessage(content=user_message)]
+        # ✅ Ensure we update the stored conversation
+        self.latest_conversation["messages"].append(HumanMessage(content=user_message))
 
         initial_state = {
-            "conversation": Conversation(messages=[
-                Message(role=MessageRole.USER, content=user_message)
-            ]),
             "notebook_context": notebook_context,
-            "messages": messages,
+            "messages": self.latest_conversation["messages"],
             "output_to_user": None,
             "should_use_tool": False
         }
