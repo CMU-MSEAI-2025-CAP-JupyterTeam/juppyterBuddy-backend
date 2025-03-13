@@ -116,7 +116,7 @@ class JupyterBuddyAgent:
         self.send_action = send_action_callback
         
         # Store conversation history
-        self.latest_conversation = {"messages": []}  # ✅ Always accessible
+        self.latest_conversation = {"messages": []}  # Always accessible
         
         # Create the agent graph
         self.create_agent_graph()
@@ -156,16 +156,16 @@ class JupyterBuddyAgent:
         """
         messages = state["messages"]
 
-        # ✅ Create tracker to detect tool execution
+        # Create tracker to detect tool execution
         tracker = ToolExecutionTracker()
 
-        # 🧠 Call the LLM (which now directly calls tools)
+        # Call the LLM (which now directly calls tools)
         response = self.llm.invoke(messages, callbacks=[tracker])
 
-        # ✅ Update conversation history **before** sending response
+        # Update conversation history **before** sending response
         self.latest_conversation["messages"] = messages + [response]
 
-        # 🔄 If a tool was executed, loop back
+        # If a tool was executed, loop back
         if tracker.tool_was_executed:
             return {
                 **state,
@@ -174,7 +174,7 @@ class JupyterBuddyAgent:
                 "output_to_user": None
             }
 
-        # ❌ Otherwise, stop execution
+        # Otherwise, stop execution
         output_to_user = response.content
         if output_to_user and output_to_user.strip():
             self.send_response(output_to_user)
@@ -196,7 +196,7 @@ class JupyterBuddyAgent:
         formatted_context = "No active notebook" if notebook_context is None else json.dumps(notebook_context, indent=2)
         system_message = SystemMessage(content=SYSTEM_PROMPT.format(notebook_context=formatted_context))
 
-        # ✅ Ensure we update the stored conversation
+        # Ensure we update the stored conversation
         self.latest_conversation["messages"].append(HumanMessage(content=user_message))
 
         initial_state = {
