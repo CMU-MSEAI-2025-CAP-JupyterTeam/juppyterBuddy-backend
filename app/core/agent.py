@@ -15,11 +15,7 @@ import logging
 from typing import Dict, List, Any, Optional, Union, TypedDict, Callable
 
 # LangChain imports
-from langchain.prompts import ChatPromptTemplate
-from langchain.output_parsers import JsonOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage, FunctionMessage, AIMessage, BaseMessage
-from langchain_core.tools import BaseTool
-from langchain_core.runnables import RunnableLambda
 from langchain.callbacks import StdOutCallbackHandler
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolExecutor
@@ -27,7 +23,6 @@ from langgraph.prebuilt import ToolExecutor
 # Local imports
 from app.core.llm import get_llm
 from app.models.conversation import Conversation, Message, MessageRole
-from app.schemas.message import NotebookContext
 from app.core.tools import (
     create_cell_tool,
     update_cell_tool,
@@ -81,7 +76,6 @@ The tools will execute independently, and their outputs will go directly to the 
 class ToolExecutionTracker(StdOutCallbackHandler):
     """Tracks whether a tool was executed in the current execution step."""
     def __init__(self):
-        super().__init__()
         self.tool_was_executed = False  # Reset every execution
     
     def on_tool_end(self, *args, **kwargs):
@@ -124,38 +118,34 @@ class JupyterBuddyAgent:
         self.send_action = send_action_callback
         
         # Store conversation history
-        self.latest_conversation = {"messages": []}
+        self.latest_conversation = {"messages": []}  # ✅ Always accessible
         
         # Create the agent graph
         self.create_agent_graph()
         
     def create_agent_graph(self):
-        """
-        Create the state graph for the agent using LangGraph.
-        This defines the flow between responding to users and taking actions.
-        """
-        # Define workflow states
+        """Create the LangGraph state machine for agent execution."""
         workflow = StateGraph(AgentState)
-        
-        # Node for generating LLM response
+
+        # LLM node
         workflow.add_node("agent", self.agent_node)
-        
-        # Add conditional edges for the agent to keep looping through tools
+
+        # Continue looping if a tool was executed
         workflow.add_conditional_edges(
             "agent",
             self.should_use_tool,
             {
-                True: "agent",  # Continue if a tool was used
-                False: END      # Stop if we're done with tools
+                True: "agent",  # 🔄 Keep looping if a tool was used
+                False: END      # ❌ Stop if no more tools needed
             }
         )
-        
+
         # Set the entry point
         workflow.set_entry_point("agent")
-        
+
         # Compile the graph
         self.graph = workflow.compile()
-    
+
     def agent_node(self, state: AgentState) -> AgentState:
         """
         Handles the LLM reasoning, decision making, and tool execution.
@@ -166,85 +156,50 @@ class JupyterBuddyAgent:
         Returns:
             Updated state after processing
         """
-        # Get the current conversation history
         messages = state["messages"]
-        
-        # Create a fresh tracker for this execution
+
+        # ✅ Create tracker to detect tool execution
         tracker = ToolExecutionTracker()
-        
-        # Call the LLM with the tracker to detect tool usage
+
+        # 🧠 Call the LLM (which now directly calls tools)
         response = self.llm.invoke(messages, callbacks=[tracker])
-        
-        # If a tool was executed, continue the loop
+
+        # ✅ Update conversation history **before** sending response
+        self.latest_conversation["messages"] = messages + [response]
+
+        # 🔄 If a tool was executed, loop back
         if tracker.tool_was_executed:
             return {
                 **state,
-                "messages": messages + [response],
+                "messages": self.latest_conversation["messages"],
                 "should_use_tool": True,
                 "output_to_user": None
             }
-        
-        # No tool was executed, just respond to the user
+
+        # ❌ Otherwise, stop execution
         output_to_user = response.content
-        
-        # Update the conversation history
-        self.latest_conversation["messages"] = messages + [response]
-        
-        # Send the response to the user if it's not empty
         if output_to_user and output_to_user.strip():
             self.send_response(output_to_user)
-        
-        # Return updated state with completion flag
+
         return {
             **state,
-            "messages": messages + [response],
+            "messages": self.latest_conversation["messages"],
             "should_use_tool": False,
             "output_to_user": output_to_user
         }
-    
+
     def should_use_tool(self, state: AgentState) -> bool:
-        """
-        Determine if the agent should continue processing or finish.
-        
-        Args:
-            state: The current state of the agent
-            
-        Returns:
-            True if tools should be used, False if LLM should respond to user
-        """
+        """Check if a tool was executed."""
         return state.get("should_use_tool", False)
-    
+
     def handle_message(self, user_message: str, notebook_context: Optional[Dict[str, Any]] = None):
-        """
-        Handle a new message from the user.
-        
-        Args:
-            user_message: The message text from the user
-            notebook_context: The current notebook context (cells, etc.)
-        """
-        logger.info(f"Handling user message: {user_message[:50]}...")
-        
-        # Format notebook context for prompt
+        """Handles new user messages and runs the agent graph."""
         formatted_context = "No active notebook" if notebook_context is None else json.dumps(notebook_context, indent=2)
-        
-        # Create system message
         system_message = SystemMessage(content=SYSTEM_PROMPT.format(notebook_context=formatted_context))
-        
-        # Get previous conversation history
-        previous_messages = self.latest_conversation.get("messages", [])
-        
-        # Decide whether to use history or start fresh
-        if previous_messages and len(previous_messages) > 0:
-            # Add new user message to existing history
-            messages = previous_messages + [HumanMessage(content=user_message)]
-        else:
-            # Start a new conversation
-            messages = [
-                system_message,
-                HumanMessage(content=user_message)
-            ]
-        
-        # Create initial state
+
+        # ✅ Directly use conversation history
+        messages = self.latest_conversation["messages"] + [HumanMessage(content=user_message)]
+
         initial_state = {
             "conversation": Conversation(messages=[
                 Message(role=MessageRole.USER, content=user_message)
@@ -254,70 +209,6 @@ class JupyterBuddyAgent:
             "output_to_user": None,
             "should_use_tool": False
         }
-        
-        # Run the agent graph
+
+        # Start agent execution
         self.graph.invoke(initial_state)
-    
-    def handle_action_result(self, result: Dict[str, Any], user_message: str, notebook_context: Optional[Dict[str, Any]] = None):
-        """
-        Handle the result of an action performed on the notebook.
-        In our architecture, this is mainly needed for error handling.
-        
-        Args:
-            result: The result of the action from the frontend
-            user_message: The original user message
-            notebook_context: The current notebook context
-        """
-        # Only process system errors or other special cases that need LLM attention
-        if result.get("action_type") == "SYSTEM_ERROR":
-            # Format notebook context for prompt
-            formatted_context = "No active notebook" if notebook_context is None else json.dumps(notebook_context, indent=2)
-            
-            # Create system message
-            system_message = SystemMessage(content=SYSTEM_PROMPT.format(notebook_context=formatted_context))
-            
-            # Get previous conversation history
-            previous_messages = self.latest_conversation.get("messages", [])
-            
-            # Create a function message for the error
-            error_info = result.get("result", {})
-            error_type = error_info.get("error_type", "unknown")
-            error_message = error_info.get("message", "An unknown error occurred")
-            
-            function_msg = FunctionMessage(
-                name="system_error",
-                content=json.dumps({
-                    "error_type": error_type,
-                    "message": error_message,
-                    "context": "This is a system error that occurred during notebook operation. " +
-                              "Please inform the user in a friendly way and suggest what they might do next."
-                })
-            )
-            
-            # Combine previous messages with the error message
-            if previous_messages and len(previous_messages) > 0:
-                messages = previous_messages + [function_msg]
-            else:
-                messages = [
-                    system_message,
-                    HumanMessage(content=user_message),
-                    function_msg
-                ]
-            
-            # Create state for error handling
-            state = {
-                "conversation": Conversation(messages=[
-                    Message(role=MessageRole.USER, content=user_message),
-                    Message(role=MessageRole.SYSTEM, content=json.dumps(result))
-                ]),
-                "notebook_context": notebook_context,
-                "messages": messages,
-                "output_to_user": None,
-                "should_use_tool": False
-            }
-            
-            # Process the error through the agent
-            self.graph.invoke(state)
-        else:
-            # For normal action results, we don't need to do anything in our architecture
-            logger.debug(f"Received action result: {result.get('action_type')} (no LLM processing needed)")

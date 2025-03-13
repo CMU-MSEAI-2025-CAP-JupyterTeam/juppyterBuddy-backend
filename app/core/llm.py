@@ -118,11 +118,14 @@ class LLMFactory:
             raise ValueError(f"Unsupported LLM provider: {provider}")
 
 @lru_cache()
-def get_llm() -> BaseChatModel:
+def get_llm(tools=None) -> BaseChatModel:
     """
     Get the LLM instance based on configuration settings.
     Uses LRU cache to avoid recreating the LLM for each request.
     
+    Args:
+        tools: Optional list of tools to bind to the LLM
+        
     Returns:
         An instance of the configured LLM
     """
@@ -144,7 +147,8 @@ def get_llm() -> BaseChatModel:
         llm = LLMFactory.create_llm(
             provider=provider,
             model_name=model_name,
-            temperature=temperature
+            temperature=temperature,
+            tools=tools
         )
         logger.info(f"Using LLM provider: {provider} with model: {model_name or 'default'}")
         return llm
@@ -154,5 +158,6 @@ def get_llm() -> BaseChatModel:
         logger.warning("Falling back to default OpenAI model")
         return LLMFactory.create_llm(
             provider=LLMProvider.OPENAI,
-            temperature=temperature
+            temperature=temperature,
+            tools=tools
         )
