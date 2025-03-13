@@ -1,0 +1,67 @@
+@startuml JupyterBuddy System Sequence Diagram
+
+actor User
+
+' === Interface Layer (UI) ===
+boundary "App.tsx (UI)" as Frontend
+
+' === Controller Layer (Backend) ===
+control WebSocketManager
+control "JupyterBuddyAgent (Agent)" as Agent
+control "LLM" as LLM
+
+' === Entity Layer (Processing & Actions) ===
+
+boundary Tools
+entity "Notebook" as Notebook
+
+' === User initiates a message ===
+User -> Frontend: Enter message
+Frontend -> Frontend: sendMessage(event)
+Frontend -> Frontend: getNotebookContext()
+Frontend -> WebSocketManager: ws.send({content, notebook_context})
+WebSocketManager -> WebSocketManager: process_user_message(session_id, content, notebook_context)
+WebSocketManager -> Agent: handle_message(content, notebook_context)
+
+' === Agent processes message ===
+Agent -> Agent: create_tracker()
+Agent -> LLM: llm.invoke(messages, callbacks=[tracker])
+
+alt Tool execution detected
+    ' === Tool execution flow ===
+    Agent -> Tools: tool_executor.execute(tool_name, tool_args)
+    Tools --> Agent: Return action payload
+    Agent -> WebSocketManager: send_action(action_payload)
+    WebSocketManager -> Frontend: ws.send({type: "action", action: action_payload})
+    
+    ' === Frontend executes action ===
+    Frontend -> Frontend: executeAction(action)
+    Frontend -> Notebook: Perform notebook operation (create/update/execute/get info)
+    Frontend -> Frontend: getNotebookContext() for updated state
+    
+    ' === Frontend sends action result back ===
+    Frontend -> WebSocketManager: ws.send({action_result: {success: true, result: {...}}})
+
+    alt action_result contains error
+        WebSocketManager -> Agent: handle_action_result(result, message, context)
+        Agent -> LLM: llm.invoke(messages_with_error)
+        LLM --> Agent: error_response
+        Agent -> WebSocketManager: send_response(error_response.content)
+        WebSocketManager -> Frontend: ws.send({type: "assistant", content: error_response})
+        Frontend -> User: Display error message
+    else Action successful
+        ' === Continue tool execution loop ===
+        Agent -> Agent: Return {should_use_tool: true}
+        Agent -> LLM: Continue execution loop
+    end
+else LLM response ready (no more tools)
+    ' === Final response to user ===
+    LLM --> Agent: final_response
+    Agent -> Agent: latest_conversation["messages"] = [...messages, response]
+    Agent -> WebSocketManager: send_response(final_response.content)
+    WebSocketManager -> Frontend: ws.send({type: "assistant", content})
+    Frontend -> Frontend: setMessages([...prev, {role: "assistant", content}])
+    Frontend -> User: Display response
+end
+
+@enduml

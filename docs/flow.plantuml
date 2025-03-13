@@ -1,0 +1,32 @@
+@startuml
+actor User
+participant "WebSocket Manager" as WS
+participant "JupyterBuddyAgent" as Agent
+participant "LLM" as LLM
+participant "Notebook Actions" as Tools
+
+User -> WS : sendMessage(content, notebookContext)
+WS -> Agent : handle_message(content, notebookContext)
+
+Agent -> LLM : invoke(messages)
+LLM -> Agent : response (content or tool call)
+
+alt Tool Execution Required
+    Agent -> Tools : execute_action(actionType, payload)
+    Tools -> Agent : action_result(actionType, success, result)
+end
+
+alt No Tool Required
+    Agent -> WS : sendResponse(content)
+end
+
+alt Tool Executed Successfully
+    Agent -> WS : sendActionResult(actionType, result)
+end
+
+alt Error Occurred
+    Agent -> WS : sendError(errorMessage)
+end
+
+WS -> User : displayMessage(content or action result)
+@enduml
