@@ -42,7 +42,7 @@ class LLMFactory:
         model_name: Optional[str] = None,
         temperature: float = 0.7,
         streaming: bool = False,
-        tools: Optional[List[BaseTool]] = None,  # ✅ Allow tool binding
+        tools: Optional[List[BaseTool]] = None,  # Allow tool binding
         **kwargs
     ) -> BaseChatModel:
         """
@@ -64,11 +64,11 @@ class LLMFactory:
         """
         settings = get_settings()
 
-        # ✅ Use explicit API keys instead of dynamic lookup
+        # Use explicit API keys instead of dynamic lookup
         api_keys = {
             LLMProvider.OPENAI: os.environ.get("OPENAI_API_KEY"),
             LLMProvider.ANTHROPIC: os.environ.get("ANTHROPIC_API_KEY"),
-            LLMProvider.GOOGLE: os.environ.get("GOOGLE_API_KEY"),  # ✅ Corrected
+            LLMProvider.GOOGLE: os.environ.get("GOOGLE_API_KEY"),  # Corrected
         }
         api_key = api_keys.get(provider)
 
@@ -80,7 +80,7 @@ class LLMFactory:
                 temperature=temperature,
                 streaming=streaming,
                 api_key=api_key,
-                tools=tools,  # ✅ Pass tools here
+                tools=tools,  # Pass tools here
                 **kwargs
             )
 
@@ -92,7 +92,7 @@ class LLMFactory:
                 temperature=temperature,
                 streaming=streaming,
                 anthropic_api_key=api_key,
-                tools=tools,  # ✅ Pass tools here
+                tools=tools,  # Pass tools here
                 **kwargs
             )
 
@@ -104,7 +104,7 @@ class LLMFactory:
                 temperature=temperature,
                 convert_system_message_to_human=True,  # Needed for Gemini
                 google_api_key=api_key,
-                tools=tools,  # ✅ Pass tools here
+                tools=tools,  # Pass tools here
                 **kwargs
             )
 
@@ -135,13 +135,13 @@ def get_llm(tools: Optional[List[BaseTool]] = None) -> BaseChatModel:
         logger.warning(f"Invalid provider: {provider_str}, falling back to OpenAI")
         provider = LLMProvider.OPENAI
 
-    # ✅ Pass tools explicitly to the factory
+    # Pass tools explicitly to the factory
     try:
         llm = LLMFactory.create_llm(
             provider=provider,
             model_name=model_name,
             temperature=temperature,
-            tools=tools  # ✅ Ensure tools are properly passed
+            tools=tools  # Ensure tools are properly passed
         )
         logger.info(f"Using LLM provider: {provider} with model: {model_name or 'default'}")
         return llm
@@ -151,5 +151,5 @@ def get_llm(tools: Optional[List[BaseTool]] = None) -> BaseChatModel:
         return LLMFactory.create_llm(
             provider=LLMProvider.OPENAI,
             temperature=temperature,
-            tools=tools  # ✅ Ensure tools are properly passed
+            tools=tools  # Ensure tools are properly passed
         )
