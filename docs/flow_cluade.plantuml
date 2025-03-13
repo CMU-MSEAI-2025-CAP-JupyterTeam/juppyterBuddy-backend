@@ -29,7 +29,7 @@ Agent -> LLM: llm.invoke(messages, callbacks=[tracker])
 
 alt Tool execution detected
     ' === Tool execution flow ===
-    Agent -> Tools: tool_executor.execute(tool_name, tool_args)
+    LLM -> Tools: tool_executor.execute(tool_name, tool_args)
     Tools --> Agent: Return action payload
     Agent -> WebSocketManager: send_action(action_payload)
     WebSocketManager -> Frontend: ws.send({type: "action", action: action_payload})
