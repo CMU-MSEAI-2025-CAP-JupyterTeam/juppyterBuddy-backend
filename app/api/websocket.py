@@ -23,7 +23,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 # Local imports
 from app.core.agent import JupyterBuddyAgent
 from app.schemas.message import NotebookContext
-from app.models.conversation import Conversation, Message, MessageRole
 
 # Set up logging
 logger = logging.getLogger(__name__)
