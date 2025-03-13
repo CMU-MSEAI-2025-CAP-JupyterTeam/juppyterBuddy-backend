@@ -108,9 +108,6 @@ class JupyterBuddyAgent:
         # Initialize the LLM with tools bound directly
         self.llm = get_llm(tools=self.tools)
         
-        # Create tool executor
-        self.tool_executor = ToolExecutor(self.tools)
-        
         # Set up callbacks for communication
         self.send_response = send_response_callback
         self.send_action = send_action_callback
