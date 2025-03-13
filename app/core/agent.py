@@ -176,6 +176,7 @@ class JupyterBuddyAgent:
         if output_to_user and output_to_user.strip():
             self.send_response(output_to_user)
 
+        # update the state
         return {
             **state,
             "messages": self.latest_conversation["messages"],
