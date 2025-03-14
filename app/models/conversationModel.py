@@ -1,3 +1,4 @@
+# app/models/conversationModel.py
 """
 JupyterBuddy Conversation Model with Database Storage
 

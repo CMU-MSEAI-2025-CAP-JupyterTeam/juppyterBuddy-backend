@@ -1,3 +1,4 @@
+# app/services/conversationService.py
 from sqlalchemy.orm import Session
 from app.models.conversationModel import ConversationDB, MessageDB, NotebookActionDB
 from app.core.database import SessionLocal  # ✅ Import SessionLocal
