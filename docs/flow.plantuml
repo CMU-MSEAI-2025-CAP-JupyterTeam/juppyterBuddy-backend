@@ -8,7 +8,6 @@ box "JupyterBuddy Agent"
     control "llmNode(E)" as LLM
     control "ToolExecutionerNode (C)" as ToolExecutor
 end box
-boundary "Notebook Tools (E)" as Tools
 entity "AgentState (E)" as AgentState
 entity Notebook
 
@@ -35,27 +34,19 @@ alt No Tools Called
     Frontend -> User: Display response
     ToolExecutor -> AgentState: update_state(state, end_agent_execution = True)
 else Tools Called
-    ToolExecutor -> Tools: Execute tool(action_args)
-    Tools --> ToolExecutor: Return execution result
-    
-    alt Tool Execution Fails
-        ' update state with error{error_type: "tool_error", error_message: err_msg}
-        ToolExecutor -> AgentState: update_state(state, error = error, end_agent_execution = False)
-    else Tool Execution Succeeds
-        ToolExecutor -> WebSocketManager: send_response({message, actions})
-        ToolExecutor -> AgentState: update_state(state, error = None, end_agent_execution = True)
-        WebSocketManager -> Frontend: ws.send({message, actions})
+    ToolExecutor -> WebSocketManager: send_response({message, actions})
+    WebSocketManager -> Frontend: ws.send({message, actions})
         
-        ' Frontend processes response
-        Frontend -> User: Display response
-        Frontend -> Notebook: executeAction(CREATE_CELL/UPDATE_CELL/EXECUTE_CELL/GET_NOTEBOOK_INFO)
-        Frontend -> Frontend: getNotebookContext() for updated state
-        Frontend -> WebSocketManager: ws.send({type: "action_result", data})
-        WebSocketManager -> Agent: handle_agent_input(session_id, data)
+    ' Frontend processes response
+    Frontend -> User: Display response
+    Frontend -> Notebook: executeAction(CREATE_CELL/UPDATE_CELL/EXECUTE_CELL/GET_NOTEBOOK_INFO)
+    Frontend -> Frontend: getNotebookContext() for updated state
+    Frontend -> WebSocketManager: ws.send({type: "action_result", data})
+    WebSocketManager -> Agent: handle_agent_input(session_id, data)
     
     ' Decision point - Handle frontend result
     alt Action Result Contains Error
-        'update state with error{error_type: "frontend_exe_error", error_message: err_msg}
+        ' Update state with error
         Agent -> AgentState: update_state(state, error = error)
     else Action Result Successful
         Agent -> AgentState: update_state(state, error = None) ' Reset error state on success
