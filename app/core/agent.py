@@ -18,7 +18,7 @@ from langgraph.graph import StateGraph, END
 
 # Local imports
 from app.core.llm import get_llm
-from app.models.conversation import Conversation, MessageRole
+from app.models.conversationModel import Conversation, MessageRole
 
 # Set up logging
 logger = logging.getLogger(__name__)
