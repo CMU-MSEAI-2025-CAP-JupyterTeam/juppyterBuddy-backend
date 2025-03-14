@@ -1,4 +1,4 @@
-# app/config/py
+#app/core/database.py
 #.................... Databse Configuration ....................
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
