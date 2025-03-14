@@ -1,10 +1,10 @@
-# app/services/convesationService.py 
 from sqlalchemy.orm import Session
-from models.conversationModel import ConversationDB, MessageDB
+from app.models.conversationModel import ConversationDB, MessageDB, NotebookActionDB
+from app.core.database import SessionLocal  # ✅ Import SessionLocal
 from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
 
-# Conversation Handler Class
-class Conversation:
+class ConversationService:
     """
     Handles storing and retrieving conversation history from the database.
     """
@@ -19,33 +19,27 @@ class Conversation:
             self.db.add(new_conversation)
             self.db.commit()
 
-    def add_message(self, role: MessageRole, content: str):
+    def add_message(self, role: str, content: str):
         """Add a new message to the conversation."""
-        message = MessageDB(session_id=self.session_id, role=role, content=content)
+        message = MessageDB(
+            session_id=self.session_id, role=role, content=content, timestamp=datetime.now(timezone.utc)
+        )
         self.db.add(message)
         self.db.commit()
 
     def add_action(self, action_type: str, payload: Dict[str, Any]):
         """Add a new notebook action."""
         action = NotebookActionDB(
-            session_id=self.session_id, action_type=action_type, payload=payload
+            session_id=self.session_id, action_type=action_type, payload=payload, timestamp=datetime.now(timezone.utc)
         )
         self.db.add(action)
         self.db.commit()
 
     def update_action_result(
-        self,
-        action_id: str,
-        result: Dict[str, Any],
-        success: bool,
-        error: Optional[str] = None,
+        self, action_id: str, result: Dict[str, Any], success: bool, error: Optional[str] = None
     ):
         """Update an action with its result."""
-        action = (
-            self.db.query(NotebookActionDB)
-            .filter_by(id=action_id, session_id=self.session_id)
-            .first()
-        )
+        action = self.db.query(NotebookActionDB).filter_by(id=action_id, session_id=self.session_id).first()
         if action:
             action.result = result
             action.success = success
@@ -55,14 +49,8 @@ class Conversation:
     def get_messages(self) -> List[Dict[str, Any]]:
         """Retrieve all messages for the conversation."""
         return [
-            {
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-            }
-            for msg in self.db.query(MessageDB)
-            .filter_by(session_id=self.session_id)
-            .all()
+            {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+            for msg in self.db.query(MessageDB).filter_by(session_id=self.session_id).all()
         ]
 
     def get_last_message(self) -> Optional[Dict[str, Any]]:
@@ -74,13 +62,8 @@ class Conversation:
             .first()
         )
         return (
-            {
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-            }
-            if msg
-            else None
+            {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+            if msg else None
         )
 
     def get_last_action(self) -> Optional[Dict[str, Any]]:
@@ -92,17 +75,10 @@ class Conversation:
             .first()
         )
         return (
-            {
-                "action_type": action.action_type,
-                "payload": action.payload,
-                "success": action.success,
-                "error": action.error,
-            }
-            if action
-            else None
+            {"action_type": action.action_type, "payload": action.payload, "success": action.success, "error": action.error}
+            if action else None
         )
 
     def close(self):
         """Close the database session."""
         self.db.close()
-
