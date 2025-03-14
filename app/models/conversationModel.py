@@ -1,4 +1,3 @@
-# app/models/convesationModel.py 
 """
 JupyterBuddy Conversation Model with Database Storage
 
@@ -9,24 +8,10 @@ Uses SQLAlchemy for database integration, supporting SQLite/PostgreSQL.
 """
 
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, JSON
+from sqlalchemy.orm import relationship
 from enum import Enum
-from typing import List, Dict, Any, Optional
-from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    DateTime,
-    ForeignKey,
-    Boolean,
-    JSON,
-)
-from sqlalchemy.orm import  relationship
-
-#Local imports
-from app.config import Base
-
-
+from app.core.database import Base
 
 # Enum for message roles
 class MessageRole(str, Enum):
@@ -34,8 +19,7 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
 
-
-# Database Model/table for Messages
+# Database Model for Messages
 class MessageDB(Base):
     __tablename__ = "messages"
 
@@ -44,7 +28,6 @@ class MessageDB(Base):
     role = Column(String, index=True)
     content = Column(String)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
 
 # Database Model for Notebook Actions
 class NotebookActionDB(Base):
@@ -58,7 +41,6 @@ class NotebookActionDB(Base):
     result = Column(JSON, nullable=True)
     success = Column(Boolean, default=False)
     error = Column(String, nullable=True)
-
 
 # Database Model for Conversations
 class ConversationDB(Base):
@@ -78,7 +60,3 @@ class ConversationDB(Base):
     actions = relationship(
         "NotebookActionDB", backref="conversation", cascade="all, delete-orphan"
     )
-
-
-# Create Tables
-Base.metadata.create_all(bind=engine)
