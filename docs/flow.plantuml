@@ -1,67 +1,65 @@
 @startuml JupyterBuddy System Sequence Diagram
 
 actor User
+boundary "App.tsx (I)" as Frontend
+control "ConnectionManager (C)" as WebSocketManager
+box "JupyterBuddy Agent"
+    control "Agent (C)" as Agent
+    control "llmNode(E)" as LLM
+    control "ToolExecutionerNode (C)" as ToolExecutor
+end box
+boundary "Notebook Tools (E)" as Tools
+entity "AgentState (E)" as AgentState
+entity Notebook
 
-' === Interface Layer (UI) ===
-boundary "App.tsx (UI)" as Frontend
-
-' === Controller Layer (Backend) ===
-control WebSocketManager
-control "JupyterBuddyAgent (Agent)" as Agent
-control "LLM" as LLM
-
-' === Entity Layer (Processing & Actions) ===
-
-boundary Tools
-entity "Notebook" as Notebook
-
-' === User initiates a message ===
+' User sends a message
 User -> Frontend: Enter message
 Frontend -> Frontend: sendMessage(event)
 Frontend -> Frontend: getNotebookContext()
-Frontend -> WebSocketManager: ws.send({content, notebook_context})
-WebSocketManager -> WebSocketManager: process_user_message(session_id, content, notebook_context)
-WebSocketManager -> Agent: handle_message(content, notebook_context)
+Frontend -> WebSocketManager: ws.send({type: "user_message", data})
+WebSocketManager -> WebSocketManager: process_user_message(session_id, data)
+WebSocketManager -> Agent: handle_agent_input(session_id, data)
 
-' === Agent processes message ===
-Agent -> Agent: create_tracker()
-Agent -> LLM: llm.invoke(messages, callbacks=[tracker])
+' Agent processes message
+Agent -> LLM: llm.invoke(messages)
+LLM -> Agent: returns response (auto)
+Agent -> ToolExecutor: invoke with llm response (auto)
 
-alt Tool execution detected
-    ' === Tool execution flow ===
-    LLM -> Tools: tool_executor.execute(tool_name, tool_args)
-    Tools --> Agent: Return action payload
-    Agent -> WebSocketManager: send_action(action_payload)
-    WebSocketManager -> Frontend: ws.send({type: "action", action: action_payload})
-    
-    ' === Frontend executes action ===
-    Frontend -> Frontend: executeAction(action)
-    Frontend -> Notebook: Perform notebook operation (create/update/execute/get info)
-    Frontend -> Frontend: getNotebookContext() for updated state
-    
-    ' === Frontend sends action result back ===
-    Frontend -> WebSocketManager: ws.send({action_result: {success: true, result: {...}}})
+' Decision point - Check if LLM generated tool calls
+ToolExecutor -> ToolExecutor: Extract response message
+ToolExecutor -> ToolExecutor: Check for "tool_calls"
 
-    alt action_result contains error
-        WebSocketManager -> Agent: handle_action_result(result, message, context)
-        Agent -> LLM: llm.invoke(messages_with_error)
-        LLM --> Agent: error_response
-        Agent -> WebSocketManager: send_response(error_response.content)
-        WebSocketManager -> Frontend: ws.send({type: "assistant", content: error_response})
-        Frontend -> User: Display error message
-    else Action successful
-        ' === Continue tool execution loop ===
-        Agent -> Agent: Return {should_use_tool: true}
-        Agent -> LLM: Continue execution loop
-    end
-else LLM response ready (no more tools)
-    ' === Final response to user ===
-    LLM --> Agent: final_response
-    Agent -> Agent: latest_conversation["messages"] = [...messages, response]
-    Agent -> WebSocketManager: send_response(final_response.content)
-    WebSocketManager -> Frontend: ws.send({type: "assistant", content})
-    Frontend -> Frontend: setMessages([...prev, {role: "assistant", content}])
+alt No Tools Called
+    ToolExecutor -> WebSocketManager: send_response({message, actions: None})
+    WebSocketManager -> Frontend: ws.send({message, actions: None})
     Frontend -> User: Display response
+    ToolExecutor -> AgentState: update_state(state, end_agent_execution = True)
+else Tools Called
+    ToolExecutor -> Tools: Execute tool(action_args)
+    Tools --> ToolExecutor: Return execution result
+    
+    alt Tool Execution Fails
+        ' update state with error{error_type: "tool_error", error_message: err_msg}
+        ToolExecutor -> AgentState: update_state(state, error = error, end_agent_execution = False)
+    else Tool Execution Succeeds
+        ToolExecutor -> WebSocketManager: send_response({message, actions})
+        ToolExecutor -> AgentState: update_state(state, error = None, end_agent_execution = True)
+        WebSocketManager -> Frontend: ws.send({message, actions})
+        
+        ' Frontend processes response
+        Frontend -> User: Display response
+        Frontend -> Notebook: executeAction(CREATE_CELL/UPDATE_CELL/EXECUTE_CELL/GET_NOTEBOOK_INFO)
+        Frontend -> Frontend: getNotebookContext() for updated state
+        Frontend -> WebSocketManager: ws.send({type: "action_result", data})
+        WebSocketManager -> Agent: handle_agent_input(session_id, data)
+    
+    ' Decision point - Handle frontend result
+    alt Action Result Contains Error
+        'update state with error{error_type: "frontend_exe_error", error_message: err_msg}
+        Agent -> AgentState: update_state(state, error = error)
+    else Action Result Successful
+        Agent -> AgentState: update_state(state, error = None) ' Reset error state on success
+    end
 end
 
 @enduml
