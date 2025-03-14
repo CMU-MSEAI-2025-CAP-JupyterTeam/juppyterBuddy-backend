@@ -1,0 +1,56 @@
+@startuml JupyterBuddy System Sequence Diagram
+
+actor User
+boundary "App.tsx (I)" as Frontend
+control "ConnectionManager (C)" as WebSocketManager
+box "JupyterBuddy Agent"
+    control "Agent (C)" as Agent
+    control "llmNode(E)" as LLM
+    control "ToolExecutionerNode (C)" as ToolExecutor
+end box
+entity "AgentState (E)" as AgentState
+entity Notebook
+
+' User sends a message
+User -> Frontend: Enter message
+Frontend -> Frontend: sendMessage(event)
+Frontend -> Frontend: getNotebookContext()
+Frontend -> WebSocketManager: ws.send({type: "user_message", data})
+WebSocketManager -> WebSocketManager: process_user_message(session_id, data)
+WebSocketManager -> Agent: handle_agent_input(session_id, data)
+
+' Agent processes message
+Agent -> LLM: llm.invoke(messages)
+LLM -> Agent: returns response (auto)
+Agent -> ToolExecutor: invoke with llm response (auto)
+
+' Decision point - Check if LLM generated tool calls
+ToolExecutor -> ToolExecutor: Extract response message
+ToolExecutor -> ToolExecutor: Check for "tool_calls"
+
+alt No Tools Called
+    ToolExecutor -> WebSocketManager: send_response({message, actions: None})
+    WebSocketManager -> Frontend: ws.send({message, actions: None})
+    Frontend -> User: Display response
+    ToolExecutor -> AgentState: update_state(state, end_agent_execution = True)
+else Tools Called
+    ToolExecutor -> WebSocketManager: send_response({message, actions})
+    WebSocketManager -> Frontend: ws.send({message, actions})
+        
+    ' Frontend processes response
+    Frontend -> User: Display response
+    Frontend -> Notebook: executeAction(CREATE_CELL/UPDATE_CELL/EXECUTE_CELL/GET_NOTEBOOK_INFO)
+    Frontend -> Frontend: getNotebookContext() for updated state
+    Frontend -> WebSocketManager: ws.send({type: "action_result", data})
+    WebSocketManager -> Agent: handle_agent_input(session_id, data)
+    
+    ' Decision point - Handle frontend result
+    alt Action Result Contains Error
+        ' Update state with error
+        Agent -> AgentState: update_state(state, error = error)
+    else Action Result Successful
+        Agent -> AgentState: update_state(state, error = None) ' Reset error state on success
+    end
+end
+
+@enduml
