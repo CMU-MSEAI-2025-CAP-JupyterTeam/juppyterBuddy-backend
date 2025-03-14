@@ -13,11 +13,11 @@ import logging
 from typing import Dict, List, Any, Optional, Union, TypedDict, Callable
 
 # LangChain imports
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, END
 
 # Local imports
 from app.core.llm import get_llm
-from app.models.conversationModel import Conversation, MessageRole
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -102,6 +102,21 @@ class JupyterBuddyAgent:
         workflow.set_entry_point("llm_node")
         self.graph = workflow.compile()
 
+    def update_state(self, state: AgentState, **updates) -> AgentState:
+        """
+        Updates the execution state with new values.
+
+        Args:
+            state: The current agent state.
+            updates: Key-value pairs to update in the state.
+
+        Returns:
+            Updated agent state.
+        """
+        new_state = {**state, **updates}
+        self.latest_state = new_state  # Persist updated state
+        return new_state
+
     def llm_node(self, state: AgentState) -> AgentState:
         """
         Processes LLM output and determines next steps.
@@ -123,30 +138,28 @@ class JupyterBuddyAgent:
 
         if tool_calls:
             actions = [{"tool_name": call["name"], "parameters": call["args"]} for call in tool_calls]
-            updated_state = {
-                **state,
-                "messages": updated_messages,
-                "actions": actions,
-                "waiting_for_frontend": True,
-                "end_agent_execution": False,
-                "error": None  # Reset error on new action execution
-            }
             self.send_action({"message": response.content, "actions": actions})
-            return updated_state
+
+            return self.update_state(state,
+                messages=updated_messages,
+                actions=actions,
+                waiting_for_frontend=True,
+                end_agent_execution=False,
+                error=None  # Reset error on new action execution
+            )
 
         # If no tools are called, respond to user
         output_to_user = response.content
         if output_to_user and output_to_user.strip():
             self.send_response({"message": output_to_user, "actions": None})
 
-        return {
-            **state,
-            "messages": updated_messages,
-            "actions": None,
-            "waiting_for_frontend": False,
-            "end_agent_execution": True,
-            "error": None
-        }
+        return self.update_state(state,
+            messages=updated_messages,
+            actions=None,
+            waiting_for_frontend=False,
+            end_agent_execution=True,
+            error=None
+        )
 
     def should_wait_for_frontend(self, state: AgentState) -> bool:
         """Determines if execution should pause for frontend feedback."""
@@ -161,18 +174,15 @@ class JupyterBuddyAgent:
             data: Input message or frontend action result.
         """
         # **Check if existing state exists**
-        if self.latest_state:
-            current_state = self.latest_state.copy()
-        else:
-            current_state = {
-                "notebook_context": None,
-                "messages": [],
-                "output_to_user": None,
-                "actions": None,
-                "error": None,
-                "waiting_for_frontend": False,
-                "end_agent_execution": False
-            }
+        current_state = self.latest_state.copy() if self.latest_state else {
+            "notebook_context": None,
+            "messages": [],
+            "output_to_user": None,
+            "actions": None,
+            "error": None,
+            "waiting_for_frontend": False,
+            "end_agent_execution": False
+        }
 
         if data.get("type") == "user_message":
             user_message = data["data"]
@@ -189,12 +199,12 @@ class JupyterBuddyAgent:
             action_result = data["data"]
 
             # Reset waiting state and handle errors if any
-            current_state["waiting_for_frontend"] = False
+            updated_state = self.update_state(current_state, waiting_for_frontend=False)
 
             if action_result.get("error"):
-                current_state["error"] = {"error_message": action_result["error"]}
+                updated_state = self.update_state(updated_state, error={"error_message": action_result["error"]})
             else:
-                current_state["error"] = None
+                updated_state = self.update_state(updated_state, error=None)
 
             # Continue execution with updated state
-            self.latest_state = self.graph.invoke(current_state)
+            self.latest_state = self.graph.invoke(updated_state)
