@@ -1,12 +1,11 @@
 """
 JupyterBuddy Agent Module
 
-This module defines the core LLM-based agent that can take actions in JupyterLab notebooks
-through a conversational interface. The agent follows a structured execution approach:
-1. The LLM decides which tools to call based on user intent.
-2. If tools are called, they are **forwarded to the frontend for execution**.
-3. Tool outputs (or errors) are sent back to the LLM, allowing it to retry or generate a response.
-4. The LLM responds to the user **only when no further tool execution is needed**.
+This module defines the core LLM-based agent that interacts with JupyterLab notebooks.
+1. The LLM decides which tools to call based on user input.
+2. If tools are needed, it **forwards the request to the frontend for execution**.
+3. Tool execution results/errors are sent back to the LLM for handling.
+4. If no tools are needed, the LLM **immediately responds to the user**.
 """
 
 import json
@@ -26,34 +25,34 @@ logger = logging.getLogger(__name__)
 
 # Type definitions for state management
 class AgentState(TypedDict):
-    """Type definition for the agent's state"""
+    """State structure for the agent's execution loop."""
     notebook_context: Optional[Dict[str, Any]]
     messages: List[BaseMessage]
     output_to_user: Optional[str]
     actions: Optional[List[Dict[str, Any]]]
     error: Optional[Dict[str, str]]  # { "error_message": "msg" }
+    waiting_for_frontend: bool  # True when waiting for frontend response
+    end_agent_execution: bool  # True when LLM sends final response
 
 # Define system prompt template for the agent
-SYSTEM_PROMPT = """You are JupyterBuddy, an intelligent assistant integrated directly in JupyterLab.
-You help users by answering questions about their Jupyter notebooks and taking actions on their behalf.
+SYSTEM_PROMPT = """You are JupyterBuddy, an intelligent assistant integrated in JupyterLab.
+You help users with their Jupyter notebooks by answering questions and taking actions.
 
-You have the ability to:
+You can:
 1. Create new code or markdown cells.
 2. Execute cells.
 3. Update existing cells.
-4. Get information about the current notebook.
+4. Get notebook metadata.
 
-When working with users, follow these guidelines:
+When working with users:
 - Be concise and helpful.
-- Understand both code and data science concepts.
-- Explain your thinking clearly.
-- When suggesting code, ensure it's correct, efficient, and follows best practices.
-- When you make changes to the notebook, explain what you did.
+- Explain your reasoning.
+- Suggest best practices for coding and data science.
 
-When handling system errors:
-- Translate technical errors into user-friendly language.
-- Focus on solutions rather than problems.
-- Suggest next steps the user can take.
+Handle errors by:
+- Explaining issues in clear language.
+- Suggesting solutions when possible.
+- Continuing execution if errors are recoverable.
 
 Current notebook context:
 {notebook_context}
@@ -61,147 +60,142 @@ Current notebook context:
 
 class JupyterBuddyAgent:
     """
-    Main agent class that handles the conversation loop with the user and takes actions
-    on the notebook based on the conversation.
+    Handles interaction with the LLM and manages execution loops based on tool calls.
     """
     
     def __init__(self, 
                  send_response_callback: Callable[[Dict[str, Any]], None],
                  send_action_callback: Callable[[Dict[str, Any]], None]):
         """
-        Initialize the agent with callbacks for sending responses to the user
-        and sending actions to the frontend.
+        Initializes the agent with WebSocket callbacks.
         
         Args:
-            send_response_callback: Function to send structured responses back to the user.
-            send_action_callback: Function to send actions directly to the frontend.
+            send_response_callback: Sends messages back to the user.
+            send_action_callback: Sends actions to the frontend.
         """
-        # Initialize the LLM with tool awareness
         self.llm = get_llm()
-
-        # Set up callbacks for communication
         self.send_response = send_response_callback
         self.send_action = send_action_callback
         
         # Store conversation history
-        self.latest_conversation = {"messages": []}  # Always accessible
-        
-        # Create the agent graph
+        self.latest_state = None  # Store state across calls
+
+        # Create execution graph
         self.create_agent_graph()
         
     def create_agent_graph(self):
-        """Create the LangGraph state machine for agent execution."""
+        """Creates the structured execution graph."""
         workflow = StateGraph(AgentState)
 
         # LLM Response Processing Node
-        workflow.add_node("process_llm_response", self.process_llm_response_node)
+        workflow.add_node("llm_node", self.llm_node)
 
-        # Set decision edges
+        # Conditional Edges
         workflow.add_conditional_edges(
-            "process_llm_response",
+            "llm_node",
             self.should_wait_for_frontend,
             {
-                True: END,  # If waiting for frontend, pause execution
-                False: END  # Otherwise, stop execution and send response
+                True: END,  # Wait for frontend execution
+                False: END  # End execution if no tool was called
             }
         )
 
-        # Set the entry point
-        workflow.set_entry_point("process_llm_response")
-
-        # Compile the graph
+        workflow.set_entry_point("llm_node")
         self.graph = workflow.compile()
 
-    def process_llm_response_node(self, state: AgentState) -> AgentState:
+    def llm_node(self, state: AgentState) -> AgentState:
         """
-        Handles the LLM reasoning, decision making, and detecting tool calls.
+        Processes LLM output and determines next steps.
         
         Args:
-            state: The current state of the agent
+            state: The current agent execution state.
             
         Returns:
-            Updated state after processing
+            Updated agent state.
         """
         messages = state["messages"]
-
-        # Call the LLM
         response = self.llm.invoke(messages)
 
         # Extract tool calls
         tool_calls = response.additional_kwargs.get("tool_calls", [])
 
-        # Update conversation history before sending response
-        self.latest_conversation["messages"] = messages + [response]
+        # Update conversation history
+        updated_messages = messages + [response]
 
         if tool_calls:
-            # Send tool execution request to frontend
             actions = [{"tool_name": call["name"], "parameters": call["args"]} for call in tool_calls]
-
-            # Update state and wait for frontend response
             updated_state = {
                 **state,
-                "messages": self.latest_conversation["messages"],
+                "messages": updated_messages,
                 "actions": actions,
+                "waiting_for_frontend": True,
+                "end_agent_execution": False,
                 "error": None  # Reset error on new action execution
             }
             self.send_action({"message": response.content, "actions": actions})
             return updated_state
 
-        # Otherwise, stop execution and send final user response
+        # If no tools are called, respond to user
         output_to_user = response.content
         if output_to_user and output_to_user.strip():
             self.send_response({"message": output_to_user, "actions": None})
 
         return {
             **state,
-            "messages": self.latest_conversation["messages"],
+            "messages": updated_messages,
             "actions": None,
-            "error": None,  # Reset error state
-            "output_to_user": output_to_user
+            "waiting_for_frontend": False,
+            "end_agent_execution": True,
+            "error": None
         }
 
     def should_wait_for_frontend(self, state: AgentState) -> bool:
-        """Determine if the agent should wait for frontend response (i.e., actions were sent)."""
-        return state["actions"] is not None
+        """Determines if execution should pause for frontend feedback."""
+        return state["waiting_for_frontend"]
     
     def handle_agent_input(self, session_id: str, data: Dict[str, Any]):
         """
-        Handles new user messages OR frontend execution results.
+        Handles both **user messages** and **frontend execution results**.
         
         Args:
-            session_id: The current user session ID.
-            data: The input data, which can be a user message OR an action result.
+            session_id: The user session ID.
+            data: Input message or frontend action result.
         """
-        if data.get("type") == "user_message":
-            user_message = data["data"]
-            formatted_context = "No active notebook" if data.get("notebook_context") is None else json.dumps(data["notebook_context"], indent=2)
-
-            # Update conversation history
-            self.latest_conversation["messages"].append(HumanMessage(content=user_message))
-
-            initial_state = {
-                "notebook_context": data.get("notebook_context"),
-                "messages": self.latest_conversation["messages"],
+        # **Check if existing state exists**
+        if self.latest_state:
+            current_state = self.latest_state.copy()
+        else:
+            current_state = {
+                "notebook_context": None,
+                "messages": [],
                 "output_to_user": None,
                 "actions": None,
-                "error": None
+                "error": None,
+                "waiting_for_frontend": False,
+                "end_agent_execution": False
             }
 
-            # Start agent execution
-            self.graph.invoke(initial_state)
+        if data.get("type") == "user_message":
+            user_message = data["data"]
+            notebook_context = data.get("notebook_context")
+            
+            # Append user message to conversation
+            current_state["messages"].append(HumanMessage(content=user_message))
+            current_state["notebook_context"] = notebook_context
+
+            # Start execution
+            self.latest_state = self.graph.invoke(current_state)
 
         elif data.get("type") == "action_result":
-            # Handle frontend response
             action_result = data["data"]
 
+            # Reset waiting state and handle errors if any
+            current_state["waiting_for_frontend"] = False
+
             if action_result.get("error"):
-                # Update state with error
-                self.graph.invoke({
-                    "error": {"error_message": action_result["error"]}
-                })
+                current_state["error"] = {"error_message": action_result["error"]}
             else:
-                # Continue processing with updated notebook context
-                self.graph.invoke({
-                    "notebook_context": action_result.get("notebook_context"),
-                    "error": None  # Reset error on success
-                })
+                current_state["error"] = None
+
+            # Continue execution with updated state
+            self.latest_state = self.graph.invoke(current_state)
