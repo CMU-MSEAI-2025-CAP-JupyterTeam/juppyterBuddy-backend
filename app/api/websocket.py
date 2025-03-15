@@ -60,77 +60,18 @@ class WebSocketManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_text(json.dumps(message))
     
-    def _convert_to_structured_tools(self, tools_json: str) -> List[BaseTool]:
-        """Convert JSON tool definitions to LangChain structured tools."""
-        tools = []
-        tools_data = json.loads(tools_json)
-        
-        for tool_def in tools_data:
-            tool_name = tool_def["name"]
-            tool_description = tool_def.get("description", "")
-            
-            # Create parameter fields dictionary
-            param_fields = {}
-            required_params = tool_def.get("parameters", {}).get("required", [])
-            
-            for name, prop in tool_def.get("parameters", {}).get("properties", {}).items():
-                # Determine the parameter type
-                param_type = str
-                if prop.get("type") == "integer":
-                    param_type = int
-                elif prop.get("type") == "boolean":
-                    param_type = bool
-                
-                # Determine if parameter is required
-                is_required = name in required_params
-                
-                # Add field to parameters dictionary
-                param_fields[name] = (
-                    Optional[param_type] if not is_required else param_type,
-                    Field(description=prop.get("description", ""))
-                )
-            
-            # Create a Pydantic model for the tool's parameters
-            if param_fields:
-                param_model = create_model(
-                    f"{tool_name.capitalize()}Parameters",
-                    **param_fields
-                )
-                
-                # Create a function that will handle this tool
-                def create_tool_func(tool_name=tool_name):
-                    def tool_func(**kwargs) -> Dict[str, Any]:
-                        return {
-                            "tool_name": tool_name,
-                            "parameters": kwargs
-                        }
-                    
-                    tool_func.__name__ = tool_name
-                    tool_func.__doc__ = tool_description
-                    
-                    return tool_func
-                
-                # Create the structured tool
-                structured_tool = StructuredTool.from_function(
-                    func=create_tool_func(),
-                    name=tool_name,
-                    description=tool_description,
-                    args_schema=param_model,
-                    return_direct=False
-                )
-                
-                tools.append(structured_tool)
-            else:
-                # Simple tool with no parameters
-                simple_tool = Tool(
-                    name=tool_name,
-                    description=tool_description,
-                    func=lambda: {"tool_name": tool_name, "parameters": {}}
-                )
-                tools.append(simple_tool)
-        
-        return tools
-    
+ 
+    def _prepare_openai_tools(self, tools_json: str) -> List[Dict[str, Any]]:
+        """
+        Parse the tools JSON from frontend which is already in OpenAI format.
+        No conversion needed since frontend now sends in the correct format.
+        """
+        try:
+            return json.loads(tools_json)
+        except Exception as e:
+            logger.exception(f"Error parsing tools JSON: {e}")
+            return []
+
     async def process_register_tools(self, session_id: str, data: Dict[str, Any]):
         """Handle tool registration message from frontend."""
         tools_json = data.get("data")
@@ -138,27 +79,27 @@ class WebSocketManager:
             return
         
         try:
-            # Convert JSON to structured tools
-            structured_tools = self._convert_to_structured_tools(tools_json)
+            # Parse tools directly - already in OpenAI format
+            openai_tools = self._prepare_openai_tools(tools_json)
             
             # Store tools for this session
-            self.session_tools[session_id] = structured_tools
+            self.session_tools[session_id] = openai_tools
             
             # Get storage directory from config or env var, or use default
             state_storage_dir = os.environ.get("AGENT_STATE_DIR", "agent_states")
             
             # Create the agent with the LLM that has tools bound to it
-            llm = get_llm(tools=structured_tools)
+            llm = get_llm(tools=openai_tools)
             self.session_agents[session_id] = JupyterBuddyAgent(
                 llm=llm,
                 send_response_callback=lambda msg: self.send_message(session_id, msg),
                 send_action_callback=lambda msg: self.send_message(session_id, msg),
                 state_storage_dir=state_storage_dir
             )
-            logger.info(f"Created agent for session {session_id} with {len(structured_tools)} tools")
+            logger.info(f"Created agent for session {session_id} with {len(openai_tools)} tools")
         except Exception as e:
             logger.exception(f"Error registering tools: {str(e)}")
-    
+
     async def process_user_message(self, session_id: str, data: Dict[str, Any]):
         """Handle user message from frontend."""
         if session_id not in self.session_agents:
@@ -233,40 +174,11 @@ connection_manager = WebSocketManager()
 # FastAPI WebSocket endpoint handler
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """Handle WebSocket connections and messages."""
-    print(f"WebSocket connection attempt for session {session_id}")
-    logger.info(f"WebSocket connection attempt for session {session_id}")
-    
     try:
-        # Remove this line too, as the connection is already accepted
-        # await websocket.accept()
+        logger.info(f"WebSocket connection attempt for session {session_id}")
         
-        print(f"WebSocket connection accepted for session {session_id}")
-        logger.info(f"WebSocket connection accepted for session {session_id}")
-        
-        # Let connection manager know about the connection
-        await connection_manager.connect(websocket, session_id)
-        
-        # Start message loop
-        while True:
-            print(f"Waiting for message from session {session_id}")
-            message = await websocket.receive_text()
-            print(f"Received message from session {session_id}")
-            await connection_manager.handle_message(session_id, message)
-    except WebSocketDisconnect:
-        print(f"WebSocket disconnected for session {session_id}")
-        logger.info(f"WebSocket disconnected for session {session_id}")
-        await connection_manager.disconnect(session_id)
-    except Exception as e:
-        print(f"ERROR in WebSocket handling: {str(e)}")
-        logger.exception(f"WebSocket error: {str(e)}")
-        await connection_manager.disconnect(session_id)
-    """Handle WebSocket connections and messages."""
-    print(f"WebSocket connection attempt for session {session_id}")
-    logger.info(f"WebSocket connection attempt for session {session_id}")
-    
-    try:
+        # Accept the WebSocket connection
         await websocket.accept()
-        print(f"WebSocket connection accepted for session {session_id}")
         logger.info(f"WebSocket connection accepted for session {session_id}")
         
         # Let connection manager know about the connection
@@ -274,27 +186,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         # Start message loop
         while True:
-            print(f"Waiting for message from session {session_id}")
+            logger.info(f"Waiting for message from session {session_id}")
             message = await websocket.receive_text()
-            print(f"Received message from session {session_id}")
-            await connection_manager.handle_message(session_id, message)
-    except WebSocketDisconnect:
-        print(f"WebSocket disconnected for session {session_id}")
-        logger.info(f"WebSocket disconnected for session {session_id}")
-        await connection_manager.disconnect(session_id)
-    except Exception as e:
-        print(f"ERROR in WebSocket handling: {str(e)}")
-        logger.exception(f"WebSocket error: {str(e)}")
-        await connection_manager.disconnect(session_id)
-    """Handle WebSocket connections and messages."""
-    try:
-        logger.info(f"Attempting to connect WebSocket for session {session_id}")
-        await connection_manager.connect(websocket, session_id)
-        
-        logger.info(f"Connection successful, entering message loop for session {session_id}")
-        while True:
-            message = await websocket.receive_text()
-            logger.info(f"Received message from session {session_id}: {message[:100]}...")
+            logger.info(f"Received message from session {session_id}")
             await connection_manager.handle_message(session_id, message)
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id}")

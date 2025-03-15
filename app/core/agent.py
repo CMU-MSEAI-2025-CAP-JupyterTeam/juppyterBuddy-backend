@@ -174,10 +174,29 @@ class ToolExecutionerNode:
 
         if tool_calls:
             # Format actions for frontend execution
-            actions = [
-                {"tool_name": call["name"], "parameters": call["args"]}
-                for call in tool_calls
-            ]
+            actions = []
+            for call in tool_calls:
+                # Handle the OpenAI function calling format
+                if "function" in call:
+                    function_data = call.get("function", {})
+                    name = function_data.get("name")
+                    # Parse the arguments JSON string
+                    try:
+                        arguments = function_data.get("arguments", "{}")
+                        args = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse arguments JSON: {arguments}")
+                        args = {}
+
+                    actions.append({"tool_name": name, "parameters": args})
+                else:
+                    # Fallback for backward compatibility or other formats
+                    actions.append(
+                        {
+                            "tool_name": call.get("name", ""),
+                            "parameters": call.get("args", {}),
+                        }
+                    )
 
             # Send action request to frontend
             self.send_action({"message": last_message.content, "actions": actions})
@@ -281,7 +300,7 @@ class JupyterBuddyAgent:
             "end_agent_execution": False,
         }
 
-    def handle_agent_input(self, session_id: str, data: Dict[str, Any]):
+    async def handle_agent_input(self, session_id: str, data: Dict[str, Any]):
         """
         Handles both **user messages** and **frontend execution results**.
 
