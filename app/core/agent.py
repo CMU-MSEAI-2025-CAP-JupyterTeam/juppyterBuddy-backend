@@ -173,6 +173,7 @@ class JupyterBuddyAgent:
     """
     
     def __init__(self, 
+                 llm,
                  send_response_callback: Callable[[Dict[str, Any]], None],
                  send_action_callback: Callable[[Dict[str, Any]], None],
                  state_storage_dir: str = "agent_states"):
@@ -184,7 +185,7 @@ class JupyterBuddyAgent:
             send_action_callback: Sends actions to the frontend.
             state_storage_dir: Directory to store persisted states.
         """
-        self.llm = get_llm()
+        self.llm = llm
         self.send_response = send_response_callback
         self.send_action = send_action_callback
         
