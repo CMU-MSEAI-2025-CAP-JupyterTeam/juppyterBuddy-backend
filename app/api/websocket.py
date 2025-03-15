@@ -7,6 +7,7 @@ JupyterBuddy Agent, handling session management and tool registration.
 """
 
 import json
+import os
 import logging
 from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
