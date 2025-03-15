@@ -18,7 +18,7 @@ from app.core.llm import get_llm
 
 # Import LangChain tools
 from langchain_core.tools import StructuredTool, BaseTool, Tool
-from langchain_core.pydantic_v1 import Field, create_model
+from pydantic.v1 import Field, create_model  # Use v1 compatibility layer
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ class WebSocketManager:
     
     async def connect(self, websocket: WebSocket, session_id: str):
         """Handle new WebSocket connection."""
-        await websocket.accept()
+        # Remove this line, as the connection is already accepted by FastAPI
+        # await websocket.accept()
+        
         logger.info(f"WebSocket connection established for session {session_id}")
         self.active_connections[session_id] = websocket
         # Agent will be created when tools are registered
@@ -231,14 +233,75 @@ connection_manager = WebSocketManager()
 # FastAPI WebSocket endpoint handler
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """Handle WebSocket connections and messages."""
-    await connection_manager.connect(websocket, session_id)
+    print(f"WebSocket connection attempt for session {session_id}")
+    logger.info(f"WebSocket connection attempt for session {session_id}")
     
     try:
+        # Remove this line too, as the connection is already accepted
+        # await websocket.accept()
+        
+        print(f"WebSocket connection accepted for session {session_id}")
+        logger.info(f"WebSocket connection accepted for session {session_id}")
+        
+        # Let connection manager know about the connection
+        await connection_manager.connect(websocket, session_id)
+        
+        # Start message loop
         while True:
+            print(f"Waiting for message from session {session_id}")
             message = await websocket.receive_text()
+            print(f"Received message from session {session_id}")
             await connection_manager.handle_message(session_id, message)
     except WebSocketDisconnect:
+        print(f"WebSocket disconnected for session {session_id}")
+        logger.info(f"WebSocket disconnected for session {session_id}")
         await connection_manager.disconnect(session_id)
     except Exception as e:
+        print(f"ERROR in WebSocket handling: {str(e)}")
         logger.exception(f"WebSocket error: {str(e)}")
         await connection_manager.disconnect(session_id)
+    """Handle WebSocket connections and messages."""
+    print(f"WebSocket connection attempt for session {session_id}")
+    logger.info(f"WebSocket connection attempt for session {session_id}")
+    
+    try:
+        await websocket.accept()
+        print(f"WebSocket connection accepted for session {session_id}")
+        logger.info(f"WebSocket connection accepted for session {session_id}")
+        
+        # Let connection manager know about the connection
+        await connection_manager.connect(websocket, session_id)
+        
+        # Start message loop
+        while True:
+            print(f"Waiting for message from session {session_id}")
+            message = await websocket.receive_text()
+            print(f"Received message from session {session_id}")
+            await connection_manager.handle_message(session_id, message)
+    except WebSocketDisconnect:
+        print(f"WebSocket disconnected for session {session_id}")
+        logger.info(f"WebSocket disconnected for session {session_id}")
+        await connection_manager.disconnect(session_id)
+    except Exception as e:
+        print(f"ERROR in WebSocket handling: {str(e)}")
+        logger.exception(f"WebSocket error: {str(e)}")
+        await connection_manager.disconnect(session_id)
+    """Handle WebSocket connections and messages."""
+    try:
+        logger.info(f"Attempting to connect WebSocket for session {session_id}")
+        await connection_manager.connect(websocket, session_id)
+        
+        logger.info(f"Connection successful, entering message loop for session {session_id}")
+        while True:
+            message = await websocket.receive_text()
+            logger.info(f"Received message from session {session_id}: {message[:100]}...")
+            await connection_manager.handle_message(session_id, message)
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected for session {session_id}")
+        await connection_manager.disconnect(session_id)
+    except Exception as e:
+        logger.exception(f"WebSocket error for session {session_id}: {str(e)}")
+        try:
+            await connection_manager.disconnect(session_id)
+        except Exception as inner_e:
+            logger.exception(f"Error during disconnect cleanup: {str(inner_e)}")

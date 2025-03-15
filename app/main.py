@@ -68,5 +68,5 @@ if __name__ == "__main__":
     import uvicorn
     # Start the server with hot-reload enabled for development
     uvicorn.run(
-        "app.main:app", host="0.0.0.0", port=8000, reload=True, log_level="info"
+        "app.main:app", host="0.0.0.0", port=8000, reload=True, log_level="debug",
     )
