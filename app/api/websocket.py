@@ -141,12 +141,16 @@ class WebSocketManager:
             # Store tools for this session
             self.session_tools[session_id] = structured_tools
             
-            # Create the agent with tools
-            llm = get_llm(tools=structured_tools)  # Pass tools to the LLM
+            # Get storage directory from config or env var, or use default
+            state_storage_dir = os.environ.get("AGENT_STATE_DIR", "agent_states")
+            
+            # Create the agent with the LLM that has tools bound to it
+            llm = get_llm(tools=structured_tools)
             self.session_agents[session_id] = JupyterBuddyAgent(
                 llm=llm,
                 send_response_callback=lambda msg: self.send_message(session_id, msg),
-                send_action_callback=lambda msg: self.send_message(session_id, msg)
+                send_action_callback=lambda msg: self.send_message(session_id, msg),
+                state_storage_dir=state_storage_dir
             )
             logger.info(f"Created agent for session {session_id} with {len(structured_tools)} tools")
         except Exception as e:
