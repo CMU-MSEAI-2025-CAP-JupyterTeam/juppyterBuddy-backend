@@ -70,7 +70,7 @@ class LLMNode:
         """
         self.llm = llm
 
-    def invoke(self, state: AgentState) -> AgentState:
+    async def invoke(self, state: AgentState) -> AgentState:
         """Process messages through the LLM and determine next actions."""
         messages = state["messages"]
 
@@ -144,13 +144,13 @@ class ToolExecutionerNode:
         Initialize with callbacks for sending responses and actions.
 
         Args:
-            send_response_callback: Function to send responses to the user
-            send_action_callback: Function to send actions to the frontend
+            send_response_callback: Async function to send responses to the user
+            send_action_callback: Async function to send actions to the frontend
         """
         self.send_response = send_response_callback
         self.send_action = send_action_callback
 
-    def invoke(self, state: AgentState) -> AgentState:
+    async def invoke(self, state: AgentState) -> AgentState:
         """
         Process LLM response to determine if tools need to be executed.
 
@@ -198,8 +198,8 @@ class ToolExecutionerNode:
                         }
                     )
 
-            # Send action request to frontend
-            self.send_action({"message": last_message.content, "actions": actions})
+            # Send action request to frontend - now awaiting the async call
+            await self.send_action({"message": last_message.content, "actions": actions})
 
             # Update state to wait for frontend
             return update_state(
@@ -210,9 +210,9 @@ class ToolExecutionerNode:
                 error=None,  # Reset error on new action execution
             )
         else:
-            # No tools called - send direct response to user
+            # No tools called - send direct response to user - now awaiting the async call
             if last_message.content and last_message.content.strip():
-                self.send_response({"message": last_message.content, "actions": None})
+                await self.send_response({"message": last_message.content, "actions": None})
 
             # Mark execution as complete
             return update_state(
@@ -232,17 +232,18 @@ class JupyterBuddyAgent:
     def __init__(
         self,
         llm,
-        send_response_callback: Callable[[Dict[str, Any]], None],
-        send_action_callback: Callable[[Dict[str, Any]], None],
+        send_response_callback,
+        send_action_callback,
         state_storage_dir: str = "agent_states",
     ):
         """
         Initializes the agent with WebSocket callbacks.
 
         Args:
-            send_response_callback: Sends messages back to the user.
-            send_action_callback: Sends actions to the frontend.
-            state_storage_dir: Directory to store persisted states.
+            llm: The language model to use
+            send_response_callback: Async function to send responses to the user
+            send_action_callback: Async function to send actions to the frontend
+            state_storage_dir: Directory to store persisted states
         """
         self.llm = llm
         self.send_response = send_response_callback
@@ -256,15 +257,44 @@ class JupyterBuddyAgent:
 
         # Initialize state persistence
         self.state_manager = StateManager(state_storage_dir)
+        
+        # Graph will be created in initialize()
+        self.graph = None
 
-        # Create execution graph
-        self.create_agent_graph()
+    @classmethod
+    async def create(
+        cls,
+        llm,
+        send_response_callback,
+        send_action_callback,
+        state_storage_dir: str = "agent_states",
+    ):
+        """
+        Factory method to create and initialize the agent asynchronously.
+        
+        Args:
+            llm: The language model to use
+            send_response_callback: Async function to send responses to the user
+            send_action_callback: Async function to send actions to the frontend
+            state_storage_dir: Directory to store persisted states
+            
+        Returns:
+            An initialized JupyterBuddyAgent instance
+        """
+        agent = cls(llm, send_response_callback, send_action_callback, state_storage_dir)
+        await agent.initialize()
+        return agent
 
-    def create_agent_graph(self):
+    async def initialize(self):
+        """Complete the initialization with async operations."""
+        await self.create_agent_graph()
+        return self
+
+    async def create_agent_graph(self):
         """Creates the structured execution graph with LLM and ToolExecutioner nodes."""
         workflow = StateGraph(AgentState)
 
-        # Add nodes
+        # Add nodes with async support
         workflow.add_node("llm_node", self.llm_node.invoke)
         workflow.add_node("tools_execution", self.tool_executor.invoke)
 
@@ -329,8 +359,8 @@ class JupyterBuddyAgent:
             current_state["messages"].append(HumanMessage(content=user_message))
             current_state["notebook_context"] = notebook_context
 
-            # Start execution
-            updated_state = self.graph.invoke(current_state)
+            # Start execution - now using ainvoke for async
+            updated_state = await self.graph.ainvoke(current_state)
 
             # Save updated state
             self.state_manager.save_state(session_id, updated_state)
@@ -358,8 +388,8 @@ class JupyterBuddyAgent:
                     ),
                 )
 
-            # Continue execution with updated state
-            updated_state = self.graph.invoke(current_state)
+            # Continue execution with updated state - now using ainvoke for async
+            updated_state = await self.graph.ainvoke(current_state)
 
             # Save updated state
             self.state_manager.save_state(session_id, updated_state)

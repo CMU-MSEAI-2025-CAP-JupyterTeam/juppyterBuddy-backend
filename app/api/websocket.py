@@ -16,10 +16,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 from app.core.agent import JupyterBuddyAgent
 from app.core.llm import get_llm
 
-# Import LangChain tools
-from langchain_core.tools import StructuredTool, BaseTool, Tool
-from pydantic.v1 import Field, create_model  # Use v1 compatibility layer
-
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -32,13 +28,10 @@ class WebSocketManager:
         """Initialize the WebSocket manager."""
         self.active_connections: Dict[str, WebSocket] = {}
         self.session_agents: Dict[str, JupyterBuddyAgent] = {}
-        self.session_tools: Dict[str, List[BaseTool]] = {}
+        self.session_tools: Dict[str, List[Dict[str, Any]]] = {}
     
     async def connect(self, websocket: WebSocket, session_id: str):
         """Handle new WebSocket connection."""
-        # Remove this line, as the connection is already accepted by FastAPI
-        # await websocket.accept()
-        
         logger.info(f"WebSocket connection established for session {session_id}")
         self.active_connections[session_id] = websocket
         # Agent will be created when tools are registered
@@ -60,7 +53,12 @@ class WebSocketManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_text(json.dumps(message))
     
- 
+    async def create_callback_for_session(self, session_id: str):
+        """Create an async callback function for sending messages to a specific session."""
+        async def callback(msg: Dict[str, Any]):
+            await self.send_message(session_id, msg)
+        return callback
+    
     def _prepare_openai_tools(self, tools_json: str) -> List[Dict[str, Any]]:
         """
         Parse the tools JSON from frontend which is already in OpenAI format.
@@ -90,12 +88,18 @@ class WebSocketManager:
             
             # Create the agent with the LLM that has tools bound to it
             llm = get_llm(tools=openai_tools)
-            self.session_agents[session_id] = JupyterBuddyAgent(
+            
+            # Create async callback for this session
+            message_callback = await self.create_callback_for_session(session_id)
+            
+            # Use the async factory method to create and initialize the agent
+            self.session_agents[session_id] = await JupyterBuddyAgent.create(
                 llm=llm,
-                send_response_callback=lambda msg: self.send_message(session_id, msg),
-                send_action_callback=lambda msg: self.send_message(session_id, msg),
+                send_response_callback=message_callback,
+                send_action_callback=message_callback,
                 state_storage_dir=state_storage_dir
             )
+            
             logger.info(f"Created agent for session {session_id} with {len(openai_tools)} tools")
         except Exception as e:
             logger.exception(f"Error registering tools: {str(e)}")
