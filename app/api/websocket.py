@@ -180,12 +180,29 @@ class WebSocketManager:
             logger.error(f"No agent found for session {session_id}")
             return
         
+        # Get the data with results array
+        action_data = data.get("data", {})
+        action_results = action_data.get("results", [])
+        
+        # Check if any results have errors
+        errors = [result.get("error") for result in action_results if result.get("error")]
+        
         # Pass action result to agent for further processing
         agent = self.session_agents[session_id]
-        await agent.handle_agent_input(session_id, {
+        
+        # Create agent input with the complete results and any errors
+        agent_input = {
             "type": "action_result",
-            "data": data.get("data", {})
-        })
+            "data": action_data,
+            "notebook_context": action_data.get("notebook_context")
+        }
+        
+        # If there are errors, include them in the state update
+        if errors:
+            error_message = "; ".join(errors)
+            agent_input["error"] = {"error_message": error_message}
+        
+        await agent.handle_agent_input(session_id, agent_input)
     
     # Main message handler
     async def handle_message(self, session_id: str, message: str):
