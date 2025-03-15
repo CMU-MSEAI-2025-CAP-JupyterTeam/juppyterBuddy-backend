@@ -18,6 +18,8 @@ from langgraph.graph import StateGraph, END
 
 # Local imports
 from app.core.llm import get_llm
+from app.core.prompts import JUPYTERBUDDY_SYSTEM_PROMPT
+from app.services.StateManagerService import StateManager
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -32,30 +34,6 @@ class AgentState(TypedDict):
     error: Optional[Dict[str, str]]  # { "error_message": "msg" }
     waiting_for_frontend: bool  # True when waiting for frontend response
     end_agent_execution: bool  # True when LLM sends final response
-
-# Define system prompt template for the agent
-SYSTEM_PROMPT = """You are JupyterBuddy, an intelligent assistant integrated in JupyterLab.
-You help users with their Jupyter notebooks by answering questions and taking actions.
-
-You can:
-1. Create new code or markdown cells.
-2. Execute cells.
-3. Update existing cells.
-4. Get notebook metadata.
-
-When working with users:
-- Be concise and helpful.
-- Explain your reasoning.
-- Suggest best practices for coding and data science.
-
-Handle errors by:
-- Explaining issues in clear language.
-- Suggesting solutions when possible.
-- Continuing execution if errors are recoverable.
-
-Current notebook context:
-{notebook_context}
-"""
 
 def update_state(state: AgentState, **kwargs) -> AgentState:
     """
@@ -103,7 +81,7 @@ class LLMNode:
         # If the first message doesn't contain a system prompt, add one
         if not messages or not isinstance(messages[0], SystemMessage):
             system_message = SystemMessage(
-                content=SYSTEM_PROMPT.format(
+                content=JUPYTERBUDDY_SYSTEM_PROMPT.format(
                     notebook_context=json.dumps(state["notebook_context"], indent=2)
                 )
             )
@@ -196,13 +174,15 @@ class JupyterBuddyAgent:
     
     def __init__(self, 
                  send_response_callback: Callable[[Dict[str, Any]], None],
-                 send_action_callback: Callable[[Dict[str, Any]], None]):
+                 send_action_callback: Callable[[Dict[str, Any]], None],
+                 state_storage_dir: str = "agent_states"):
         """
         Initializes the agent with WebSocket callbacks.
         
         Args:
             send_response_callback: Sends messages back to the user.
             send_action_callback: Sends actions to the frontend.
+            state_storage_dir: Directory to store persisted states.
         """
         self.llm = get_llm()
         self.send_response = send_response_callback
@@ -212,8 +192,8 @@ class JupyterBuddyAgent:
         self.llm_node = LLMNode(self.llm)
         self.tool_executor = ToolExecutionerNode(send_response_callback, send_action_callback)
         
-        # Store latest state
-        self.latest_state = None
+        # Initialize state persistence
+        self.state_manager = StateManager(state_storage_dir)
         
         # Create execution graph
         self.create_agent_graph()
@@ -266,28 +246,36 @@ class JupyterBuddyAgent:
             session_id: The user session ID.
             data: Input message or frontend action result.
         """
-        # Initialize or get existing state
-        current_state = self.latest_state.copy() if self.latest_state else self.create_initial_state()
+        # Get current state for session or create new if not found
+        state = self.state_manager.load_state(session_id)
+        if state is None:
+            state = self.create_initial_state()
+        
+        # Make a copy to avoid modifying the original
+        current_state = state.copy()
         
         if data.get("type") == "user_message":
             # Process new user message
             user_message = data["data"]
             notebook_context = data.get("notebook_context")
             
-            logger.info(f"Received user message: {user_message}")
+            logger.info(f"Received user message from session {session_id}: {user_message}")
             
             # Append user message to conversation
             current_state["messages"].append(HumanMessage(content=user_message))
             current_state["notebook_context"] = notebook_context
             
             # Start execution
-            self.latest_state = self.graph.invoke(current_state)
+            updated_state = self.graph.invoke(current_state)
+            
+            # Save updated state
+            self.state_manager.save_state(session_id, updated_state)
             
         elif data.get("type") == "action_result":
             # Process frontend action result
             action_result = data["data"]
             
-            logger.info(f"Received action result: {json.dumps(action_result)}")
+            logger.info(f"Received action result from session {session_id}")
             
             # Update state based on execution result
             if action_result.get("error"):
@@ -305,4 +293,7 @@ class JupyterBuddyAgent:
                 )
             
             # Continue execution with updated state
-            self.latest_state = self.graph.invoke(current_state)
+            updated_state = self.graph.invoke(current_state)
+            
+            # Save updated state
+            self.state_manager.save_state(session_id, updated_state)
