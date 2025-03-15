@@ -8,11 +8,16 @@ JupyterBuddy Agent, handling session management and tool registration.
 
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
-# Import the Agent class
+# Import the Agent class and LLM
 from app.core.agent import JupyterBuddyAgent
+from app.core.llm import get_llm
+
+# Import LangChain tools
+from langchain_core.tools import StructuredTool, BaseTool, Tool
+from langchain_core.pydantic_v1 import Field, create_model
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -26,19 +31,14 @@ class WebSocketManager:
         """Initialize the WebSocket manager."""
         self.active_connections: Dict[str, WebSocket] = {}
         self.session_agents: Dict[str, JupyterBuddyAgent] = {}
-        self.session_tools: Dict[str, str] = {}
+        self.session_tools: Dict[str, List[BaseTool]] = {}
     
     async def connect(self, websocket: WebSocket, session_id: str):
         """Handle new WebSocket connection."""
         await websocket.accept()
         logger.info(f"WebSocket connection established for session {session_id}")
         self.active_connections[session_id] = websocket
-        
-        # Create a new agent for this session
-        self.session_agents[session_id] = JupyterBuddyAgent(
-            send_response_callback=lambda msg: self.send_message(session_id, msg),
-            send_action_callback=lambda msg: self.send_message(session_id, msg)
-        )
+        # Agent will be created when tools are registered
     
     async def disconnect(self, session_id: str):
         """Handle WebSocket disconnection."""
@@ -57,22 +57,76 @@ class WebSocketManager:
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_text(json.dumps(message))
     
-    async def process_user_message(self, session_id: str, data: Dict[str, Any]):
-        """Handle user message from frontend."""
-        if session_id not in self.session_agents:
-            logger.error(f"No agent found for session {session_id}")
-            await self.send_message(session_id, {
-                "message": "Error: Session not initialized properly."
-            })
-            return
+    def _convert_to_structured_tools(self, tools_json: str) -> List[BaseTool]:
+        """Convert JSON tool definitions to LangChain structured tools."""
+        tools = []
+        tools_data = json.loads(tools_json)
         
-        # Pass message to agent for processing
-        agent = self.session_agents[session_id]
-        await agent.handle_agent_input(session_id, {
-            "type": "user_message",
-            "data": data.get("data", ""),
-            "notebook_context": data.get("notebook_context")
-        })
+        for tool_def in tools_data:
+            tool_name = tool_def["name"]
+            tool_description = tool_def.get("description", "")
+            
+            # Create parameter fields dictionary
+            param_fields = {}
+            required_params = tool_def.get("parameters", {}).get("required", [])
+            
+            for name, prop in tool_def.get("parameters", {}).get("properties", {}).items():
+                # Determine the parameter type
+                param_type = str
+                if prop.get("type") == "integer":
+                    param_type = int
+                elif prop.get("type") == "boolean":
+                    param_type = bool
+                
+                # Determine if parameter is required
+                is_required = name in required_params
+                
+                # Add field to parameters dictionary
+                param_fields[name] = (
+                    Optional[param_type] if not is_required else param_type,
+                    Field(description=prop.get("description", ""))
+                )
+            
+            # Create a Pydantic model for the tool's parameters
+            if param_fields:
+                param_model = create_model(
+                    f"{tool_name.capitalize()}Parameters",
+                    **param_fields
+                )
+                
+                # Create a function that will handle this tool
+                def create_tool_func(tool_name=tool_name):
+                    def tool_func(**kwargs) -> Dict[str, Any]:
+                        return {
+                            "tool_name": tool_name,
+                            "parameters": kwargs
+                        }
+                    
+                    tool_func.__name__ = tool_name
+                    tool_func.__doc__ = tool_description
+                    
+                    return tool_func
+                
+                # Create the structured tool
+                structured_tool = StructuredTool.from_function(
+                    func=create_tool_func(),
+                    name=tool_name,
+                    description=tool_description,
+                    args_schema=param_model,
+                    return_direct=False
+                )
+                
+                tools.append(structured_tool)
+            else:
+                # Simple tool with no parameters
+                simple_tool = Tool(
+                    name=tool_name,
+                    description=tool_description,
+                    func=lambda: {"tool_name": tool_name, "parameters": {}}
+                )
+                tools.append(simple_tool)
+        
+        return tools
     
     async def process_register_tools(self, session_id: str, data: Dict[str, Any]):
         """Handle tool registration message from frontend."""
@@ -80,17 +134,41 @@ class WebSocketManager:
         if not tools_json:
             return
         
-        # Store tools for this session
-        self.session_tools[session_id] = tools_json
-        logger.info(f"Tools registered for session {session_id}")
-        
-        # Create or update agent with tools
-        if session_id in self.session_agents:
+        try:
+            # Convert JSON to structured tools
+            structured_tools = self._convert_to_structured_tools(tools_json)
+            
+            # Store tools for this session
+            self.session_tools[session_id] = structured_tools
+            
+            # Create the agent with tools
+            llm = get_llm()
             self.session_agents[session_id] = JupyterBuddyAgent(
+                llm=llm,
                 send_response_callback=lambda msg: self.send_message(session_id, msg),
                 send_action_callback=lambda msg: self.send_message(session_id, msg),
-                tools_json=tools_json
+                tools=structured_tools
             )
+            logger.info(f"Created agent for session {session_id} with {len(structured_tools)} tools")
+        except Exception as e:
+            logger.exception(f"Error registering tools: {str(e)}")
+    
+    async def process_user_message(self, session_id: str, data: Dict[str, Any]):
+        """Handle user message from frontend."""
+        if session_id not in self.session_agents:
+            logger.error(f"No agent found for session {session_id}")
+            await self.send_message(session_id, {
+                "message": "Error: System initialization incomplete. Please refresh the page."
+            })
+            return
+        
+        # Process message with the agent
+        agent = self.session_agents[session_id]
+        await agent.handle_agent_input(session_id, {
+            "type": "user_message",
+            "data": data.get("data", ""),
+            "notebook_context": data.get("notebook_context")
+        })
     
     async def process_action_result(self, session_id: str, data: Dict[str, Any]):
         """Handle action result from frontend."""
@@ -105,6 +183,7 @@ class WebSocketManager:
             "data": data.get("data", {})
         })
     
+    # Main message handler
     async def handle_message(self, session_id: str, message: str):
         """Route incoming WebSocket messages based on type."""
         try:
