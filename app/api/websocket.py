@@ -142,12 +142,11 @@ class WebSocketManager:
             self.session_tools[session_id] = structured_tools
             
             # Create the agent with tools
-            llm = get_llm()
+            llm = get_llm(tools=structured_tools)  # Pass tools to the LLM
             self.session_agents[session_id] = JupyterBuddyAgent(
                 llm=llm,
                 send_response_callback=lambda msg: self.send_message(session_id, msg),
-                send_action_callback=lambda msg: self.send_message(session_id, msg),
-                tools=structured_tools
+                send_action_callback=lambda msg: self.send_message(session_id, msg)
             )
             logger.info(f"Created agent for session {session_id} with {len(structured_tools)} tools")
         except Exception as e:
