@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 # Import the Agent class and LLM
-from app.core.agent import JupyterBuddyAgent
+from app.core.agent import JupyterBuddyAgent, get_session_state
 from app.core.llm import get_llm
 
 # Set up logging
@@ -83,9 +83,6 @@ class WebSocketManager:
             # Store tools for this session
             self.session_tools[session_id] = openai_tools
             
-            # Get storage directory from config or env var, or use default
-            state_storage_dir = os.environ.get("AGENT_STATE_DIR", "agent_states")
-            
             # Create the agent with the LLM that has tools bound to it
             llm = get_llm(tools=openai_tools)
             
@@ -93,11 +90,12 @@ class WebSocketManager:
             message_callback = await self.create_callback_for_session(session_id)
             
             # Use the async factory method to create and initialize the agent
+            # Pass session_id to the agent constructor
             self.session_agents[session_id] = await JupyterBuddyAgent.create(
                 llm=llm,
                 send_response_callback=message_callback,
                 send_action_callback=message_callback,
-                state_storage_dir=state_storage_dir
+                session_id=session_id  # Pass session_id here
             )
             
             logger.info(f"Created agent for session {session_id} with {len(openai_tools)} tools")
@@ -110,6 +108,18 @@ class WebSocketManager:
             logger.error(f"No agent found for session {session_id}")
             await self.send_message(session_id, {
                 "message": "Error: System initialization incomplete. Please refresh the page."
+            })
+            return
+        
+        # Check for pending tool calls first
+        session_state = get_session_state(session_id)
+        if session_state.get("pending_tool_calls"):
+            pending_count = len(session_state.get("pending_tool_calls", {}))
+            logger.warning(f"User message received with {pending_count} pending tool calls")
+            
+            # Send a message to the user to wait for operations to complete
+            await self.send_message(session_id, {
+                "message": f"Please wait for the {pending_count} current operations to complete. Some commands may take a while to execute."
             })
             return
         
@@ -131,25 +141,49 @@ class WebSocketManager:
         action_data = data.get("data", {})
         action_results = action_data.get("results", [])
         
+        # Log information about received results
+        logger.info(f"Received {len(action_results)} action results from session {session_id}")
+        
         # Check if any results have errors
         errors = [result.get("error") for result in action_results if result.get("error")]
-        
-        # Pass action result to agent for further processing
-        agent = self.session_agents[session_id]
         
         # Create agent input with the complete results and any errors
         agent_input = {
             "type": "action_result",
-            "data": action_data,
-            "notebook_context": action_data.get("notebook_context")
+            "data": {
+                "results": action_results,  # Pass all results to the agent
+                "notebook_context": action_data.get("notebook_context")
+            }
         }
         
         # If there are errors, include them in the state update
         if errors:
-            error_message = "; ".join(errors)
-            agent_input["error"] = {"error_message": error_message}
+            error_message = "; ".join([err for err in errors if err])
+            if error_message:
+                agent_input["error"] = {"error_message": error_message}
         
+        # Pass action result to agent for further processing
+        agent = self.session_agents[session_id]
         await agent.handle_agent_input(session_id, agent_input)
+    
+    async def check_session_status(self, session_id: str) -> Dict[str, Any]:
+        """Get the current status of a session."""
+        if session_id not in self.session_agents:
+            return {
+                "status": "error",
+                "message": "Session not found or not initialized"
+            }
+        
+        session_state = get_session_state(session_id)
+        pending_count = len(session_state.get("pending_tool_calls", {}))
+        
+        status = {
+            "status": "ready" if pending_count == 0 else "busy",
+            "pending_operations": pending_count,
+            "error": session_state.get("error")
+        }
+        
+        return status
     
     # Main message handler
     async def handle_message(self, session_id: str, message: str):
@@ -164,6 +198,13 @@ class WebSocketManager:
                 await self.process_user_message(session_id, data)
             elif message_type == "action_result":
                 await self.process_action_result(session_id, data)
+            elif message_type == "check_status":
+                # New message type to check if operations are still pending
+                status = await self.check_session_status(session_id)
+                await self.send_message(session_id, {
+                    "type": "status_update",
+                    "data": status
+                })
             else:
                 logger.warning(f"Unknown message type: {message_type}")
         except Exception as e:
