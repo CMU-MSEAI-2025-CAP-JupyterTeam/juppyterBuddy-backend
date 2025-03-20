@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 # Import the Agent class and LLM
-from app.core.agent import JupyterBuddyAgent, get_session_state
+from app.core.agent import JupyterBuddyAgent
 from app.core.llm import get_llm
 
 # Set up logging
@@ -111,18 +111,6 @@ class WebSocketManager:
             })
             return
         
-        # Check for pending tool calls first
-        session_state = get_session_state(session_id)
-        if session_state.get("pending_tool_calls"):
-            pending_count = len(session_state.get("pending_tool_calls", {}))
-            logger.warning(f"User message received with {pending_count} pending tool calls")
-            
-            # Send a message to the user to wait for operations to complete
-            await self.send_message(session_id, {
-                "message": f"Please wait for the {pending_count} current operations to complete. Some commands may take a while to execute."
-            })
-            return
-        
         # Process message with the agent
         agent = self.session_agents[session_id]
         await agent.handle_agent_input(session_id, {
@@ -158,32 +146,12 @@ class WebSocketManager:
         
         # If there are errors, include them in the state update
         if errors:
-            error_message = "; ".join([err for err in errors if err])
-            if error_message:
-                agent_input["error"] = {"error_message": error_message}
+            error_message = "; ".join(errors)
+            agent_input["error"] = {"error_message": error_message}
         
         # Pass action result to agent for further processing
         agent = self.session_agents[session_id]
         await agent.handle_agent_input(session_id, agent_input)
-    
-    async def check_session_status(self, session_id: str) -> Dict[str, Any]:
-        """Get the current status of a session."""
-        if session_id not in self.session_agents:
-            return {
-                "status": "error",
-                "message": "Session not found or not initialized"
-            }
-        
-        session_state = get_session_state(session_id)
-        pending_count = len(session_state.get("pending_tool_calls", {}))
-        
-        status = {
-            "status": "ready" if pending_count == 0 else "busy",
-            "pending_operations": pending_count,
-            "error": session_state.get("error")
-        }
-        
-        return status
     
     # Main message handler
     async def handle_message(self, session_id: str, message: str):
@@ -198,13 +166,6 @@ class WebSocketManager:
                 await self.process_user_message(session_id, data)
             elif message_type == "action_result":
                 await self.process_action_result(session_id, data)
-            elif message_type == "check_status":
-                # New message type to check if operations are still pending
-                status = await self.check_session_status(session_id)
-                await self.send_message(session_id, {
-                    "type": "status_update",
-                    "data": status
-                })
             else:
                 logger.warning(f"Unknown message type: {message_type}")
         except Exception as e:
@@ -244,3 +205,5 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             await connection_manager.disconnect(session_id)
         except Exception as inner_e:
             logger.exception(f"Error during disconnect cleanup: {str(inner_e)}")
+            
+            
