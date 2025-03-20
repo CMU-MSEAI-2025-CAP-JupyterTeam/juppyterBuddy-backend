@@ -17,7 +17,6 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Base
 from langgraph.graph import StateGraph, END
 
 # Local imports
-from app.core.llm import get_llm
 from app.core.prompts import JUPYTERBUDDY_SYSTEM_PROMPT
 from app.services.StateManagerService import StateManager
 
