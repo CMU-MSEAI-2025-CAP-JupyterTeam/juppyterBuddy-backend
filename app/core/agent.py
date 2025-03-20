@@ -81,100 +81,142 @@ class LLMNode:
 
     async def invoke(self, state: AgentState) -> AgentState:
         """Process messages through the LLM and determine next actions."""
-        messages = state["messages"]
+        try:
+            messages = state["messages"]
 
-        # If there are pending tool calls, we should not proceed with LLM invocation
-        if state["pending_tool_calls"]:
-            pending_count = len(state["pending_tool_calls"])
-            logger.warning(
-                f"Cannot proceed - waiting for {pending_count} tool responses"
+            # If there are pending tool calls, we should not proceed with LLM invocation
+            if state["pending_tool_calls"]:
+                pending_count = len(state["pending_tool_calls"])
+                logger.warning(
+                    f"Cannot proceed - waiting for {pending_count} tool responses"
+                )
+                return update_state(
+                    state,
+                    error={
+                        "error_message": f"Still working on previous operations. Please wait a moment."
+                    },
+                    waiting_for_frontend=True,
+                    end_agent_execution=True,
+                )
+
+            # Format conversation history (last few exchanges)
+            conversation_summary = self._format_conversation_history(
+                messages[-6:] if len(messages) > 6 else messages
             )
+
+            # Format pending actions
+            pending_actions = (
+                "No pending actions."
+                if not state["pending_tool_calls"] and not state["waiting_for_frontend"]
+                else f"Waiting for {len(state['pending_tool_calls'])} operations to complete. Please wait before continuing."
+            )
+
+            # Format error state
+            error_state = (
+                "No errors detected."
+                if not state["error"]
+                else f"ERROR: {state['error'].get('error_message', 'Unknown error')}\nThis error must be addressed before proceeding."
+            )
+
+            # Create system prompt with all context
+            system_content = JUPYTERBUDDY_SYSTEM_PROMPT.format(
+                notebook_context=json.dumps(state["notebook_context"], indent=2),
+                conversation_history=conversation_summary,
+                pending_actions=pending_actions,
+                error_state=error_state,
+            )
+
+            system_message = SystemMessage(content=system_content)
+
+            # Replace or add system message
+            if messages and isinstance(messages[0], SystemMessage):
+                messages = [system_message] + messages[1:]
+            else:
+                messages = [system_message] + messages
+
+            try:
+                # Get response from LLM
+                response = self.llm.invoke(messages)
+
+                # Update messages with LLM response
+                updated_messages = messages + [response]
+
+                # Track any new tool calls in the response
+                pending_tool_calls = state["pending_tool_calls"].copy()
+                if hasattr(response, "additional_kwargs"):
+                    tool_calls = response.additional_kwargs.get("tool_calls", [])
+                    for call in tool_calls:
+                        if "id" in call:
+                            tool_name = "unknown_tool"
+                            if "function" in call:
+                                tool_name = call.get("function", {}).get(
+                                    "name", "unknown_tool"
+                                )
+                            else:
+                                tool_name = call.get("name", "unknown_tool")
+
+                            pending_tool_calls[call["id"]] = {
+                                "name": tool_name,
+                                "timestamp": None,  # Could add timestamp if needed
+                            }
+                            logger.info(
+                                f"Added pending tool call: {call['id']} for tool {tool_name}"
+                            )
+
+                return update_state(
+                    state,
+                    messages=updated_messages,
+                    output_to_user=response.content,
+                    pending_tool_calls=pending_tool_calls,
+                )
+
+            except Exception as e:
+                logger.error(f"Error during LLM invocation: {str(e)}")
+
+                # Check for the specific tool calls error
+                error_msg = str(e)
+                if (
+                    "tool_call_id" in error_msg
+                    and "must be followed by tool messages" in error_msg
+                ):
+                    # This is a tool message response error - handle it internally
+                    tool_call_id = None
+                    try:
+                        # Try to extract the missing tool call ID
+                        import re
+
+                        match = re.search(r"call_[a-zA-Z0-9]+", error_msg)
+                        if match:
+                            tool_call_id = match.group(0)
+                    except:
+                        pass
+
+                    # Add a user-friendly error
+                    return update_state(
+                        state,
+                        error={
+                            "error_message": "JupyterBuddy needs a moment to process. Please try again."
+                        },
+                        messages=state["messages"],
+                    )
+                else:
+                    # Other errors - provide a generic message
+                    return update_state(
+                        state,
+                        error={
+                            "error_message": "JupyterBuddy encountered an issue. Please try again."
+                        },
+                        messages=state["messages"],
+                    )
+
+        except Exception as outer_e:
+            # Catch any other exceptions in the method
+            logger.error(f"Unexpected error in LLM node: {str(outer_e)}")
             return update_state(
                 state,
                 error={
-                    "error_message": f"Waiting for {pending_count} tool operations to complete. Please try again after all operations finish."
+                    "error_message": "JupyterBuddy service is temporarily unavailable."
                 },
-                waiting_for_frontend=True,
-                end_agent_execution=True,  # Mark as done so we don't continue processing
-            )
-
-        # Format conversation history (last few exchanges)
-        conversation_summary = self._format_conversation_history(
-            messages[-6:] if len(messages) > 6 else messages
-        )
-
-        # Format pending actions
-        pending_actions = (
-            "No pending actions."
-            if not state["pending_tool_calls"] and not state["waiting_for_frontend"]
-            else f"Waiting for {len(state['pending_tool_calls'])} operations to complete. Please wait before continuing."
-        )
-
-        # Format error state
-        error_state = (
-            "No errors detected."
-            if not state["error"]
-            else f"ERROR: {state['error'].get('error_message', 'Unknown error')}\nThis error must be addressed before proceeding."
-        )
-
-        # Create system prompt with all context
-        system_content = JUPYTERBUDDY_SYSTEM_PROMPT.format(
-            notebook_context=json.dumps(state["notebook_context"], indent=2),
-            conversation_history=conversation_summary,
-            pending_actions=pending_actions,
-            error_state=error_state,
-        )
-
-        system_message = SystemMessage(content=system_content)
-
-        # Replace or add system message
-        if messages and isinstance(messages[0], SystemMessage):
-            messages = [system_message] + messages[1:]
-        else:
-            messages = [system_message] + messages
-
-        try:
-            # Get response from LLM
-            response = self.llm.invoke(messages)
-
-            # Update messages with LLM response
-            updated_messages = messages + [response]
-
-            # Track any new tool calls in the response
-            pending_tool_calls = state["pending_tool_calls"].copy()
-            if hasattr(response, "additional_kwargs"):
-                tool_calls = response.additional_kwargs.get("tool_calls", [])
-                for call in tool_calls:
-                    if "id" in call:
-                        tool_name = "unknown_tool"
-                        if "function" in call:
-                            tool_name = call.get("function", {}).get(
-                                "name", "unknown_tool"
-                            )
-                        else:
-                            tool_name = call.get("name", "unknown_tool")
-
-                        pending_tool_calls[call["id"]] = {
-                            "name": tool_name,
-                            "timestamp": None,  # Could add timestamp if needed
-                        }
-                        logger.info(
-                            f"Added pending tool call: {call['id']} for tool {tool_name}"
-                        )
-
-            return update_state(
-                state,
-                messages=updated_messages,
-                output_to_user=response.content,
-                pending_tool_calls=pending_tool_calls,
-            )
-        except Exception as e:
-            logger.error(f"Error during LLM invocation: {str(e)}")
-
-            # Add error information to state
-            return update_state(
-                state,
-                error={"error_message": f"LLM invocation failed: {str(e)}"},
                 messages=state["messages"],
             )
 
