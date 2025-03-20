@@ -12,8 +12,8 @@ import logging
 from typing import Dict, Any, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
-# Import the Agent class and LLM
-from app.core.agent import JupyterBuddyAgent
+# Import the Agent class, LLM, and state management functions
+from app.core.agent import JupyterBuddyAgent, get_session_state  # Add get_session_state here
 from app.core.llm import get_llm
 
 # Set up logging
@@ -111,8 +111,24 @@ class WebSocketManager:
             })
             return
         
-        # Process message with the agent
+        # Get the agent instance
         agent = self.session_agents[session_id]
+        
+        # Check if the agent is currently processing any tool calls
+        # This requires access to the agent's state
+        current_state = get_session_state(session_id)
+        
+        # If there are pending tool calls, don't allow new user messages
+        if current_state.get("pending_tool_calls") or current_state.get("waiting_for_frontend"):
+            logger.warning(f"Received user message while agent is waiting for tool responses in session {session_id}")
+            await self.send_message(session_id, {
+                "message": "Please wait until the current operation completes before sending new messages.",
+                "status": "waiting",
+                "actions": None
+            })
+            return
+        
+        # Process message with the agent
         await agent.handle_agent_input(session_id, {
             "type": "user_message",
             "data": data.get("data", ""),

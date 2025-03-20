@@ -7,7 +7,13 @@ import logging
 from typing import Dict, List, Any, Optional, Union, TypedDict, Callable, Set
 
 # LangChain imports
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage,
+    BaseMessage,
+    ToolMessage,
+)
 from langgraph.graph import StateGraph, END
 
 # Local imports
@@ -31,7 +37,9 @@ class AgentState(TypedDict):
     error: Optional[Dict[str, str]]  # { "error_message": "msg" }
     waiting_for_frontend: bool  # True when waiting for frontend response
     end_agent_execution: bool  # True when LLM sends final response
-    pending_tool_calls: Dict[str, Dict]  # Map of tool_call_id -> tool details that need responses
+    pending_tool_calls: Dict[
+        str, Dict
+    ]  # Map of tool_call_id -> tool details that need responses
 
 
 def update_state(state: AgentState, **kwargs) -> AgentState:
@@ -54,7 +62,7 @@ def get_session_state(session_id: str) -> AgentState:
             "error": None,
             "waiting_for_frontend": False,
             "end_agent_execution": False,
-            "pending_tool_calls": {}  # Initialize empty pending tool calls
+            "pending_tool_calls": {},  # Initialize empty pending tool calls
         }
     return global_session_states[session_id]
 
@@ -64,29 +72,145 @@ def update_session_state(session_id: str, state: AgentState) -> None:
     global_session_states[session_id] = state
 
 
-def fix_missing_tool_responses(messages: List[BaseMessage], pending_tool_calls: Dict[str, Dict]) -> List[BaseMessage]:
+def fix_missing_tool_responses(
+    messages: List[BaseMessage], pending_tool_calls: Dict[str, Dict]
+) -> List[BaseMessage]:
     """Add tool messages for any pending tool calls that haven't been responded to."""
     if not pending_tool_calls:
         return messages  # No pending tool calls, nothing to fix
-    
+
     # Create a copy of messages
     updated_messages = messages.copy()
-    
+
     # For each pending tool call, add a placeholder tool message
     for tool_call_id, tool_info in pending_tool_calls.items():
-        logger.warning(f"Adding placeholder response for pending tool call: {tool_call_id}")
-        
+        logger.warning(
+            f"Adding placeholder response for pending tool call: {tool_call_id}"
+        )
+
         tool_message = ToolMessage(
             content="No response received yet from the frontend.",
             tool_call_id=tool_call_id,
             name=tool_info.get("name", "unknown_tool"),
-            status="error"
+            status="error",
         )
-        
+
         # Add the tool message to the end of the conversation
         updated_messages.append(tool_message)
-    
+
     return updated_messages
+
+
+class ToolExecutionerNode:
+    """Handles tool execution decision-making and action generation."""
+
+    def __init__(self, send_response_callback, send_action_callback, session_id: str):
+        """Initialize with callbacks for sending responses and actions."""
+        self.send_response = send_response_callback
+        self.send_action = send_action_callback
+        self.session_id = session_id
+
+    async def invoke(self, state: AgentState) -> AgentState:
+        """Process LLM response to determine if tools need to be executed."""
+        # Extract the last message (LLM response)
+        messages = state["messages"]
+        if not messages:
+            return state
+
+        # Check if there was an error in the LLM node
+        if state["error"]:
+            # If there was an error, send it to the user
+            await self.send_response(
+                {
+                    "message": f"An error occurred: {state['error'].get('error_message', 'Unknown error')}",
+                    "actions": None,
+                    "session_id": self.session_id,
+                }
+            )
+
+            # Mark execution as complete
+            return update_state(
+                state,
+                waiting_for_frontend=False,
+                end_agent_execution=True,
+            )
+
+        last_message = messages[-1]
+
+        # Extract tool calls if any
+        tool_calls = getattr(last_message, "additional_kwargs", {}).get(
+            "tool_calls", []
+        )
+
+        if tool_calls:
+            # Format actions for frontend execution
+            actions = []
+            for call in tool_calls:
+                # Handle the OpenAI function calling format
+                if "function" in call:
+                    function_data = call.get("function", {})
+                    name = function_data.get("name")
+                    # Parse the arguments JSON string
+                    try:
+                        arguments = function_data.get("arguments", "{}")
+                        args = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse arguments JSON: {arguments}")
+                        args = {}
+
+                    actions.append(
+                        {
+                            "tool_name": name,
+                            "parameters": args,
+                            "tool_call_id": call.get("id"),
+                        }
+                    )
+                else:
+                    # Fallback for backward compatibility or other formats
+                    actions.append(
+                        {
+                            "tool_name": call.get("name", ""),
+                            "parameters": call.get("args", {}),
+                            "tool_call_id": call.get("id", ""),
+                        }
+                    )
+
+            # Send action request to frontend
+            await self.send_action(
+                {
+                    "message": last_message.content,
+                    "actions": actions,
+                    "session_id": self.session_id,
+                }
+            )
+
+            # Update state to wait for frontend
+            return update_state(
+                state,
+                actions=actions,
+                waiting_for_frontend=True,
+                end_agent_execution=False,
+                error=None,  # Reset error on new action execution
+            )
+        else:
+            # No tools called - send direct response to user
+            if last_message.content and last_message.content.strip():
+                await self.send_response(
+                    {
+                        "message": last_message.content,
+                        "actions": None,
+                        "session_id": self.session_id,
+                    }
+                )
+
+            # Mark execution as complete
+            return update_state(
+                state,
+                actions=None,
+                waiting_for_frontend=False,
+                end_agent_execution=True,
+                error=None,
+            )
 
 
 class LLMNode:
@@ -96,15 +220,41 @@ class LLMNode:
         """Initialize with an LLM instance."""
         self.llm = llm
 
+    def _format_conversation_history(self, messages):
+        """Format conversation history for system prompt."""
+        if not messages:
+            return "No previous conversation."
+
+        history = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                history.append(f"User: {msg.content}")
+            elif isinstance(msg, AIMessage):
+                history.append(f"Assistant: {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                history.append(f"Tool ({msg.name}): {msg.content}")
+
+        return "\n".join(history)
+
     async def invoke(self, state: AgentState) -> AgentState:
         """Process messages through the LLM and determine next actions."""
-        # If there are pending tool calls, add placeholder responses
+        # Get the current messages
         messages = state["messages"]
+
+        # Instead of adding placeholders, we'll carefully check if the conversation history
+        # has all required tool responses before proceeding
+
+        # 1. Check if there are any pending tool calls without responses
         if state["pending_tool_calls"]:
-            messages = fix_missing_tool_responses(messages, state["pending_tool_calls"])
-            # Clear pending tool calls since we've added responses
-            state = update_state(state, pending_tool_calls={})
-        
+            # We have pending tool calls without responses, so we should not generate a new LLM response
+            # Instead, return the current state and wait for the tool responses
+            logger.warning(
+                f"Waiting for {len(state['pending_tool_calls'])} tool responses to complete"
+            )
+            return update_state(
+                state, waiting_for_frontend=True, end_agent_execution=False
+            )
+
         # Format conversation history (last few exchanges)
         conversation_summary = self._format_conversation_history(
             messages[-6:] if len(messages) > 6 else messages
@@ -143,159 +293,43 @@ class LLMNode:
         try:
             # Get response from LLM
             response = self.llm.invoke(messages)
-            
+
             # Update messages with LLM response
             updated_messages = messages + [response]
-            
+
             # Track any new tool calls in the response
-            pending_tool_calls = state["pending_tool_calls"].copy()
+            pending_tool_calls = {}  # Reset pending calls - we'll only track new ones
             if hasattr(response, "additional_kwargs"):
                 tool_calls = response.additional_kwargs.get("tool_calls", [])
                 for call in tool_calls:
                     if "id" in call:
                         tool_name = "unknown_tool"
                         if "function" in call:
-                            tool_name = call.get("function", {}).get("name", "unknown_tool")
+                            tool_name = call.get("function", {}).get(
+                                "name", "unknown_tool"
+                            )
                         else:
                             tool_name = call.get("name", "unknown_tool")
-                            
+
                         pending_tool_calls[call["id"]] = {
                             "name": tool_name,
-                            "timestamp": None  # Could add timestamp if needed
+                            "timestamp": None,  # Could add timestamp if needed
                         }
-            
+
             return update_state(
-                state, 
-                messages=updated_messages, 
+                state,
+                messages=updated_messages,
                 output_to_user=response.content,
-                pending_tool_calls=pending_tool_calls
+                pending_tool_calls=pending_tool_calls,
             )
         except Exception as e:
             logger.error(f"Error during LLM invocation: {str(e)}")
-            
+
             # Add error information to state
             return update_state(
                 state,
                 error={"error_message": f"LLM invocation failed: {str(e)}"},
-                messages=state["messages"]
-            )
-
-    def _format_conversation_history(self, messages):
-        """Format conversation history for system prompt."""
-        if not messages:
-            return "No previous conversation."
-
-        history = []
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                history.append(f"User: {msg.content}")
-            elif isinstance(msg, AIMessage):
-                history.append(f"Assistant: {msg.content}")
-
-        return "\n".join(history)
-
-
-class ToolExecutionerNode:
-    """Handles tool execution decision-making and action generation."""
-
-    def __init__(self, send_response_callback, send_action_callback, session_id: str):
-        """Initialize with callbacks for sending responses and actions."""
-        self.send_response = send_response_callback
-        self.send_action = send_action_callback
-        self.session_id = session_id
-
-    async def invoke(self, state: AgentState) -> AgentState:
-        """Process LLM response to determine if tools need to be executed."""
-        # Extract the last message (LLM response)
-        messages = state["messages"]
-        if not messages:
-            return state
-
-        # Check if there was an error in the LLM node
-        if state["error"]:
-            # If there was an error, send it to the user
-            await self.send_response({
-                "message": f"An error occurred: {state['error'].get('error_message', 'Unknown error')}",
-                "actions": None,
-                "session_id": self.session_id
-            })
-            
-            # Mark execution as complete
-            return update_state(
-                state,
-                waiting_for_frontend=False,
-                end_agent_execution=True,
-            )
-
-        last_message = messages[-1]
-
-        # Extract tool calls if any
-        tool_calls = getattr(last_message, "additional_kwargs", {}).get(
-            "tool_calls", []
-        )
-
-        if tool_calls:
-            # Format actions for frontend execution
-            actions = []
-            for call in tool_calls:
-                # Handle the OpenAI function calling format
-                if "function" in call:
-                    function_data = call.get("function", {})
-                    name = function_data.get("name")
-                    # Parse the arguments JSON string
-                    try:
-                        arguments = function_data.get("arguments", "{}")
-                        args = json.loads(arguments)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse arguments JSON: {arguments}")
-                        args = {}
-
-                    actions.append({
-                        "tool_name": name, 
-                        "parameters": args, 
-                        "tool_call_id": call.get("id")
-                    })
-                else:
-                    # Fallback for backward compatibility or other formats
-                    actions.append(
-                        {
-                            "tool_name": call.get("name", ""),
-                            "parameters": call.get("args", {}),
-                            "tool_call_id": call.get("id", "")
-                        }
-                    )
-
-            # Send action request to frontend
-            await self.send_action({
-                "message": last_message.content, 
-                "actions": actions,
-                "session_id": self.session_id
-            })
-
-            # Update state to wait for frontend
-            return update_state(
-                state,
-                actions=actions,
-                waiting_for_frontend=True,
-                end_agent_execution=False,
-                error=None,  # Reset error on new action execution
-            )
-        else:
-            # No tools called - send direct response to user
-            if last_message.content and last_message.content.strip():
-                await self.send_response({
-                    "message": last_message.content, 
-                    "actions": None,
-                    "session_id": self.session_id
-                })
-
-            # Mark execution as complete
-            return update_state(
-                state,
-                actions=None,
-                waiting_for_frontend=False,
-                end_agent_execution=True,
-                error=None,
+                messages=state["messages"],
             )
 
 
@@ -303,11 +337,7 @@ class JupyterBuddyAgent:
     """Main agent class that orchestrates the workflow between LLM decisions and tool execution."""
 
     def __init__(
-        self,
-        llm,
-        send_response_callback,
-        send_action_callback,
-        session_id: str
+        self, llm, send_response_callback, send_action_callback, session_id: str
     ):
         """Initializes the agent with WebSocket callbacks."""
         self.llm = llm
@@ -320,17 +350,13 @@ class JupyterBuddyAgent:
         self.tool_executor = ToolExecutionerNode(
             send_response_callback, send_action_callback, session_id
         )
-        
+
         # Graph will be created in initialize()
         self.graph = None
 
     @classmethod
     async def create(
-        cls,
-        llm,
-        send_response_callback,
-        send_action_callback,
-        session_id: str
+        cls, llm, send_response_callback, send_action_callback, session_id: str
     ):
         """Factory method to create and initialize the agent asynchronously."""
         agent = cls(llm, send_response_callback, send_action_callback, session_id)
@@ -400,47 +426,57 @@ class JupyterBuddyAgent:
             # Process frontend action result
             action_result = data["data"]
             action_list = current_state.get("actions", [])
-            
+
             logger.info(f"Received action result from session {session_id}")
-            
-            # Add ToolMessage responses for each tool call
-            if action_list:
-                # Get the pending tool calls
-                pending_tool_calls = current_state.get("pending_tool_calls", {}).copy()
-                
-                for action in action_list:
-                    tool_call_id = action.get("tool_call_id")
-                    tool_name = action.get("tool_name")
-                    
-                    # Skip if we don't have a tool call ID
-                    if not tool_call_id:
-                        continue
-                    
+
+            # Get all results from the frontend
+            all_results = action_result.get("results", [])
+
+            # Get the pending tool calls
+            pending_tool_calls = current_state.get("pending_tool_calls", {}).copy()
+
+            # Track if we processed any tool calls
+            processed_tool_calls = False
+
+            # Process each result and create tool messages
+            for result in all_results:
+                tool_call_id = result.get("tool_call_id")
+                tool_name = result.get("tool_name")
+
+                # Skip if we don't have a tool call ID
+                if not tool_call_id:
+                    logger.warning(f"Missing tool_call_id in result: {result}")
+                    continue
+
+                # Check if this is a pending tool call
+                if tool_call_id in pending_tool_calls:
                     # Create appropriate tool message content
-                    if action_result.get("error"):
-                        tool_content = action_result["error"]
+                    if result.get("error"):
+                        tool_content = result["error"]
                         status = "error"
                     else:
-                        tool_content = action_result.get("result", "Action completed successfully")
+                        tool_content = result.get(
+                            "result", "Action completed successfully"
+                        )
                         status = "success"
-                    
+
                     # Add the tool message to the conversation history
                     tool_message = ToolMessage(
                         content=tool_content,
                         tool_call_id=tool_call_id,
                         name=tool_name,
-                        status=status
+                        status=status,
                     )
                     current_state["messages"].append(tool_message)
                     logger.info(f"Added tool message for tool call {tool_call_id}")
-                    
+
                     # Remove this tool call from pending list since we've handled it
-                    if tool_call_id in pending_tool_calls:
-                        del pending_tool_calls[tool_call_id]
-                
-                # Update the pending tool calls in the state
-                current_state["pending_tool_calls"] = pending_tool_calls
-            
+                    del pending_tool_calls[tool_call_id]
+                    processed_tool_calls = True
+
+            # Update the pending tool calls in the state
+            current_state["pending_tool_calls"] = pending_tool_calls
+
             # Update state based on execution result
             if action_result.get("error"):
                 current_state = update_state(
@@ -452,14 +488,19 @@ class JupyterBuddyAgent:
                 current_state = update_state(
                     current_state,
                     error=None,
-                    waiting_for_frontend=False,
+                    # Only set waiting_for_frontend to False if there are no more pending tool calls
+                    waiting_for_frontend=len(pending_tool_calls) > 0,
                     notebook_context=data.get(
                         "notebook_context", current_state["notebook_context"]
                     ),
                 )
 
-            # Continue execution with updated state
-            updated_state = await self.graph.ainvoke(current_state)
-
-            # Save updated state to global store
-            update_session_state(session_id, updated_state)
+            # Only continue execution if we've processed all tool calls
+            if not pending_tool_calls:
+                # Continue execution with updated state
+                updated_state = await self.graph.ainvoke(current_state)
+                # Save updated state to global store
+                update_session_state(session_id, updated_state)
+            else:
+                # Just save the current state with updated tool responses
+                update_session_state(session_id, current_state)
