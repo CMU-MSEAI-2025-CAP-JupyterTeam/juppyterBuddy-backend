@@ -71,7 +71,7 @@ class LLMNode:
     def __init__(self, llm):
         """Initialize with an LLM instance."""
         self.llm = llm
-
+        
     async def invoke(self, state: AgentState) -> AgentState:
         """Process messages through the LLM and determine next actions."""
         try:
@@ -125,6 +125,7 @@ class LLMNode:
 
             try:
                 # Get response from LLM
+                logger.debug(f"[LLMNode] Messages before LLM invoke:\n{[str(m) for m in state['messages']]}")
                 response = self.llm.invoke(messages_to_use)
 
                 # Update full messages list with LLM response
@@ -256,210 +257,104 @@ class LLMNode:
         
         return result
 
-
 class ToolExecutionerNode:
     """Handles tool execution decision-making and action generation."""
 
     def __init__(self, send_response_callback, send_action_callback, session_id: str):
-        """Initialize with callbacks for sending responses and actions."""
         self.send_response = send_response_callback
         self.send_action = send_action_callback
         self.session_id = session_id
 
     async def invoke(self, state: AgentState) -> AgentState:
-        """Process LLM response to determine if tools need to be executed."""
-        # Extract the last message (LLM response)
         messages = state["messages"]
         if not messages:
             return state
 
-        last_message = messages[-1]
+        last = messages[-1]
 
-        # If the last message is already an AIMessage but not from the LLM (e.g., error message)
-        # just send it to the user and end execution
-        if isinstance(last_message, AIMessage) and last_message.content and "encountered an issue" in last_message.content:
-            await self.send_response(
-                {
-                    "message": last_message.content,
+        # Gracefully return if it's an error AI message (not from OpenAI LLM)
+        if isinstance(last, AIMessage) and "encountered an issue" in last.content:
+            await self.send_response({
+                "message": last.content,
+                "actions": None,
+                "session_id": self.session_id
+            })
+            return update_state(state, end_agent_execution=True, waiting_for_frontend=False)
+
+        tool_calls = getattr(last, "additional_kwargs", {}).get("tool_calls", [])
+
+        # 🛑 Case 1: No tools called → just send assistant response
+        if not tool_calls:
+            if last.content.strip():
+                await self.send_response({
+                    "message": last.content,
                     "actions": None,
-                    "session_id": self.session_id,
-                }
-            )
-            return update_state(
-                state,
-                waiting_for_frontend=False,
-                end_agent_execution=True,
-            )
+                    "session_id": self.session_id
+                })
+            return update_state(state, end_agent_execution=True)
 
-        # Extract tool calls if any
-        tool_calls = getattr(last_message, "additional_kwargs", {}).get("tool_calls", [])
-
-        # Check if there are multiple tool calls
+        # 🚫 Case 2: Multiple tool calls → instruct LLM to retry with one
         if len(tool_calls) > 1:
             logger.info(f"Multiple tool calls detected ({len(tool_calls)}). Instructing LLM to use one tool at a time.")
-            
-            # Create ToolMessage responses for each tool call instead of a single AIMessage
-            feedback_messages = []
-            for tool_call in tool_calls:
-                tool_call_id = tool_call.get("id", "")
-                if tool_call_id:
-                    tool_message = ToolMessage(
-                        content="Please call only one tool at a time. Process the results of each tool before making additional tool calls.",
-                        tool_call_id=tool_call_id,
-                        name="system_feedback",
-                    )
-                    feedback_messages.append(tool_message)
-            
-            # Add the messages to the state
-            updated_messages = state["messages"].copy() + feedback_messages
-            
-            # Return to the LLM node without executing any tools
+            feedback_msgs = [
+                ToolMessage(
+                    content="Please call only one tool at a time.",
+                    tool_call_id=tc["id"],
+                    name="system_feedback"
+                )
+                for tc in tool_calls if "id" in tc
+            ]
             return update_state(
                 state,
-                messages=updated_messages,
+                messages=state["messages"] + feedback_msgs,
+                end_agent_execution=False,
                 waiting_for_frontend=False,
-                end_agent_execution=False,  # Signal to continue to LLM node
-                current_action=None,
+                current_action=None
             )
 
-        if len(tool_calls) == 1:
-            try:
-                # Process the single tool call
-                tool_call = tool_calls[0]
-                
-                # Handle the OpenAI function calling format
-                if "function" in tool_call:
-                    function_data = tool_call.get("function", {})
-                    name = function_data.get("name")
-                    
-                    # Parse the arguments JSON string
-                    try:
-                        arguments = function_data.get("arguments", "{}")
-                        args = json.loads(arguments)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse arguments JSON: {arguments}")
-                        args = {}
+        # ✅ Case 3: Exactly one tool call → parse it
+        try:
+            tool_call = tool_calls[0]
+            function_data = tool_call.get("function", {})
+            tool_name = function_data.get("name", "")
+            arguments = function_data.get("arguments", "{}")
+            tool_call_id = tool_call.get("id", "")
 
-                    action = {
-                        "tool_name": name,
-                        "parameters": args,
-                        "tool_call_id": tool_call.get("id"),
-                    }
-                else:
-                    # Fallback for backward compatibility or other formats
-                    action = {
-                        "tool_name": tool_call.get("name", ""),
-                        "parameters": tool_call.get("args", {}),
-                        "tool_call_id": tool_call.get("id", ""),
-                    }
+            args = json.loads(arguments)
 
-                # Send action request to frontend
-                await self.send_action(
-                    {
-                        "message": last_message.content,
-                        "actions": [action],
-                        "session_id": self.session_id,
-                    }
-                )
+            action = {
+                "tool_name": tool_name,
+                "parameters": args,
+                "tool_call_id": tool_call_id
+            }
 
-                # Update state to wait for frontend
-                return update_state(
-                    state,
-                    current_action=action,
-                    waiting_for_frontend=True,
-                    end_agent_execution=False,
-                )
-            except Exception as e:
-                logger.error(f"Error executing tool: {str(e)}")
-                
-                # Create ToolMessage for the error response
-                # We need to respond to the actual tool_call_id
-                tool_call_id = None
-                tool_name = "unknown_tool"
-                
-                # Extract the tool_call_id and name from the current tool call
-                if tool_calls and len(tool_calls) > 0:
-                    tool_call = tool_calls[0]
-                    if isinstance(tool_call, dict):
-                        tool_call_id = tool_call.get("id")
-                        if "function" in tool_call:
-                            tool_name = tool_call.get("function", {}).get("name", tool_name)
-                        else:
-                            tool_name = tool_call.get("name", tool_name)
-                
-                if tool_call_id:
-                    error_tool_message = ToolMessage(
-                        content=f"Error executing tool: {str(e)}",
-                        tool_call_id=tool_call_id,
-                        name=tool_name,
-                        status="error"
-                    )
-                    
-                    await self.send_response(
-                        {
-                            "message": f"JupyterBuddy encountered an issue while executing commands: {str(e)}",
-                            "actions": None,
-                            "session_id": self.session_id,
-                        }
-                    )
-                    
-                    return update_state(
-                        state,
-                        messages=state["messages"] + [error_tool_message],
-                        waiting_for_frontend=False,
-                        end_agent_execution=False,  # Continue to LLM node
-                    )
-                else:
-                    # If we don't have a tool_call_id, use an AIMessage as a fallback
-                    error_message = AIMessage(
-                        content=f"JupyterBuddy encountered an issue while executing commands: {str(e)}"
-                    )
-                    await self.send_response(
-                        {
-                            "message": f"JupyterBuddy encountered an issue while executing commands: {str(e)}",
-                            "actions": None,
-                            "session_id": self.session_id,
-                        }
-                    )
-                    return update_state(
-                        state,
-                        messages=state["messages"] + [error_message],
-                        waiting_for_frontend=False,
-                        end_agent_execution=True,
-                    )
-        else:
-            try:
-                # No tools called - send direct response to user
-                if last_message.content and last_message.content.strip():
-                    await self.send_response(
-                        {
-                            "message": last_message.content,
-                            "actions": None,
-                            "session_id": self.session_id,
-                        }
-                    )
+            await self.send_action({
+                "message": last.content,
+                "actions": [action],
+                "session_id": self.session_id
+            })
 
-                # Mark execution as complete
-                return update_state(
-                    state,
-                    current_action=None,
-                    waiting_for_frontend=False,
-                    end_agent_execution=True,
-                )
-            except Exception as e:
-                logger.error(f"Error sending response: {str(e)}")
-                # Create an AIMessage for error reporting
-                error_message = AIMessage(
-                    content=f"Error sending response: {str(e)}"
-                )
-                return update_state(
-                    state,
-                    messages=state["messages"] + [error_message],
-                    waiting_for_frontend=False,
-                    end_agent_execution=True,
-                    current_action=None,  # Ensure current_action is cleared
-                )
+            # Update state and wait for frontend
+            return update_state(
+                state,
+                current_action=action,
+                waiting_for_frontend=True,
+                end_agent_execution=False
+            )
 
+        except Exception as e:
+            logger.exception(f"Error parsing tool call: {str(e)}")
+            fallback_msg = AIMessage(content=f"Tool execution failed: {str(e)}")
+            await self.send_response({
+                "message": fallback_msg.content,
+                "actions": None,
+                "session_id": self.session_id
+            })
+            return update_state(
+                state,
+                messages=state["messages"] + [fallback_msg],
+                end_agent_execution=True
+            )
 
 class JupyterBuddyAgent:
     """Main agent class that orchestrates the workflow between LLM decisions and tool execution."""
@@ -533,112 +428,96 @@ class JupyterBuddyAgent:
         return True
 
     async def handle_agent_input(self, session_id: str, data: Dict[str, Any]):
-        """Handles both user messages and frontend execution results."""
-        # Get current state for session from global store
+        """
+        Handles both user messages and frontend action results.
+        This is the entry point for agent control loop execution.
+        """
+        # ⚠️ Use reference, not copy (CRITICAL!)
         current_state = get_session_state(session_id)
-        # Make a copy to work with
-        current_state = current_state.copy()
 
+        # 🧠 Handle user messages from the frontend
         if data.get("type") == "user_message":
-            # Check if we're still waiting for a tool response
             if current_state.get("waiting_for_frontend"):
-                # Send a message to the user to wait
-                await self.send_response(
-                    {
-                        "message": "Please wait for the current operation to complete before continuing.",
-                        "actions": None,
-                        "session_id": session_id,
-                    }
-                )
-                return  # Don't proceed with the LLM invocation
+                await self.send_response({
+                    "message": "Please wait for the current operation to complete.",
+                    "actions": None,
+                    "session_id": session_id
+                })
+                return
 
-            # Process new user message
             user_message = data["data"]
             notebook_context = data.get("notebook_context")
 
             logger.info(f"Received user message from session {session_id}: {user_message}")
 
-            # If this is the first message and we have a notebook context, add it as a system message
+            # 👋 Add initial system message with notebook context (first message only)
             if current_state["first_message"] and notebook_context is not None:
-                # Create a system message with notebook context included
+                from app.core.prompts import JUPYTERBUDDY_SYSTEM_PROMPT
+
                 system_content = JUPYTERBUDDY_SYSTEM_PROMPT.format(
                     notebook_context=json.dumps(notebook_context, indent=2),
                     conversation_history="No previous conversation.",
                     pending_actions="No pending actions.",
                     error_state="No errors detected.",
                 )
-                
+
                 current_state["messages"].append(SystemMessage(content=system_content))
                 current_state["first_message"] = False
                 logger.info(f"Added initial notebook context as system message for session {session_id}")
 
-            # Append user message to conversation
+            # ➕ Add the user message to message history
             current_state["messages"].append(HumanMessage(content=user_message))
 
-            # Start execution - now using ainvoke for async
+            # ▶️ Start the LangGraph execution loop
             updated_state = await self.graph.ainvoke(current_state)
 
-            # Save updated state to global store
+            # 💾 Update state in global store
             update_session_state(session_id, updated_state)
 
+        # ⚙️ Handle action results from the frontend
         elif data.get("type") == "action_result":
-            # Process frontend action result
+            logger.debug(f"[Agent] Current state before updating:\n{json.dumps(current_state, indent=2, default=str)}")
             action_result = data["data"]
             current_action = current_state.get("current_action")
             action_results = action_result.get("results", [])
 
             logger.info(f"Received action result from session {session_id}")
 
-            # Verify we have results
-            if not action_results or len(action_results) == 0:
-                logger.warning("Received empty action results")
-                # Send direct notification to user
-                await self.send_response(
-                    {
-                        "message": "No results returned for tool execution",
-                        "actions": None,
-                        "session_id": session_id,
-                    }
-                )
+            # 🛑 Check for missing or empty results
+            if not action_results:
+                logger.warning("No tool result received")
+                await self.send_response({
+                    "message": "No result returned from tool execution.",
+                    "actions": None,
+                    "session_id": session_id
+                })
                 current_state["waiting_for_frontend"] = False
-                current_state["current_action"] = None  # Clear current_action
+                current_state["current_action"] = None
                 update_session_state(session_id, current_state)
                 return
 
-            # Get the result (should be only one)
+            # ✅ Use only the first result (for now)
             result = action_results[0]
             tool_success = result.get("success", False)
             tool_error = result.get("error")
-            
-            # Create content for the tool message
-            if not tool_success:
-                tool_content = tool_error or "Tool execution failed"
-                status = "error"
-            else:
-                # Convert result to string
-                result_content = result.get("result", {})
-                tool_content = (
-                    json.dumps(result_content)
-                    if isinstance(result_content, dict)
-                    else str(result_content)
-                )
-                status = "success"
 
-            # Add the tool message to conversation - ONLY place we create ToolMessage
-            current_action = current_state.get("current_action")
-            if current_action:
-                tool_message = ToolMessage(
-                    content=tool_content,
-                    tool_call_id=current_action.get("tool_call_id", ""),
-                    name=current_action.get("tool_name", ""),
-                    status=status,
-                )
-                current_state["messages"].append(tool_message)
+            # 🛠️ Create ToolMessage to send to LLM
+            tool_message = ToolMessage(
+                content=tool_error or json.dumps(result.get("result", {})),
+                tool_call_id=current_action.get("tool_call_id", ""),
+                name=current_action.get("tool_name", ""),
+                status="error" if not tool_success else "success"
+            )
 
-            # Update state
+            # ➕ Add the ToolMessage to the live state
+            current_state["messages"].append(tool_message)
+
+            # 🔄 Reset control flags
             current_state["waiting_for_frontend"] = False
-            current_state["current_action"] = None  # Clear current_action
-            
-            # Continue execution with updated state
+            current_state["current_action"] = None
+
+            # ▶️ Continue the LangGraph loop
             updated_state = await self.graph.ainvoke(current_state)
+
+            # 💾 Update state again after round-trip
             update_session_state(session_id, updated_state)
