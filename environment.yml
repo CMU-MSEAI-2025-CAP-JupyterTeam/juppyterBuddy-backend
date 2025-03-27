@@ -1,0 +1,11 @@
+name: jupyterlab-ext
+channels:
+  - defaults
+dependencies:
+  - copier=9
+  - git
+  - jinja2-time
+  - jupyterlab=4
+  - nodejs=20
+  - python=3.11
+prefix: /opt/anaconda3/envs/jupyterlab-ext
