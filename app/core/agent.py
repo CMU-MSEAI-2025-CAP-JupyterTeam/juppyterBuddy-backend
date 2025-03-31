@@ -22,7 +22,8 @@ AgentState = TypedDict(
         "waiting_for_tool_response": bool,
         "end_agent_execution": bool,
         "first_message": bool,
-        "single_tool_call_requests": int,
+        "multiple_tool_call_requests": int,
+        "session_id": str,
     },
 )
 
@@ -36,6 +37,13 @@ def update_state(state: AgentState, **kwargs) -> AgentState:
     new_state.update(kwargs)
     return new_state
 
+def decide_if_multiple_tools(state: AgentState) -> bool:
+    """
+    Return True if the agent previously encountered multiple tool calls
+    and asked the LLM to retry. Otherwise, return False.
+    """
+    retry_count = state.get("multiple_tool_call_requests", 0)
+    return retry_count > 0
 
 class JupyterBuddyAgent:
     """
@@ -85,10 +93,12 @@ class JupyterBuddyAgent:
         builder.add_edge("llm", "tool_call_validator")
         builder.add_conditional_edges(
             "tool_call_validator",
-            self._decide_next_step,
-            {"no_tool": END, "one_tool": "tools", "retry": "llm"},
+            decide_if_multiple_tools,
+            {
+                True: "llm",     # go back to LLM to retry with one tool call
+                False: "tools",  # exactly one tool found, proceed to tools node
+            },
         )
-
         self.graph = builder.compile()
 
     async def _llm_node(self, state: AgentState) -> AgentState:
@@ -149,11 +159,11 @@ class JupyterBuddyAgent:
                 state,
                 messages=pruned_messages + [llm_msg],
                 llm_response=None,
-                single_tool_call_requests=0,
+                multiple_tool_call_requests=0,
             )
 
         else:
-            retry_count = state.get("single_tool_call_requests", 0)
+            retry_count = state.get("multiple_tool_call_requests", 0)
 
             if retry_count == 0:
                 # First time asking for correction
@@ -165,7 +175,7 @@ class JupyterBuddyAgent:
                     state,
                     messages=state["messages"] + [guidance],
                     llm_response=None,
-                    single_tool_call_requests=1,
+                    multiple_tool_call_requests=1,
                 )
             else:
                 # Already asked — don't add another message
@@ -173,7 +183,7 @@ class JupyterBuddyAgent:
                 return update_state(
                     state,
                     llm_response=None,
-                    # single_tool_call_requests stays the same
+                    # multiple_tool_call_requests stays the same
                 )
 
     async def _tool_node(self, state: AgentState) -> AgentState:
@@ -214,25 +224,6 @@ class JupyterBuddyAgent:
             waiting_for_tool_response=True,
             end_agent_execution=False,
         )
-
-    def _should_continue(self, state: AgentState) -> bool:
-        """Determine if the agent should continue processing or end execution."""
-        if state.get("waiting_for_tool_response", False) or state.get(
-            "end_agent_execution", False
-        ):
-            return False
-        return True
-
-    def _decide_next_step(state: AgentState) -> str:
-        llm_msg = state.get("llm_response")
-        tool_calls = llm_msg.additional_kwargs.get("tool_calls", []) if llm_msg else []
-
-        if not tool_calls:
-            return "no_tool"
-        elif len(tool_calls) == 1:
-            return "one_tool"
-        else:
-            return "retry"
 
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]

@@ -100,10 +100,11 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
             "messages": [],
             "llm_response": None,
             "current_action": None,
-            "waiting_for_tool_response": False,  # ✅ new key
+            "waiting_for_tool_response": False, 
             "end_agent_execution": False,
             "first_message": True,
-            "single_tool_call_requests": 0,  # ✅ required for retry logic
+            "multiple_tool_call_requests": 0,
+             "session_id": session_id,
         }
 
         logger.info(
