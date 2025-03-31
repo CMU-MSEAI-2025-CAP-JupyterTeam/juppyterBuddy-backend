@@ -127,35 +127,55 @@ class JupyterBuddyAgent:
             )
 
         elif len(tool_calls) == 1:
-            # Valid single tool call
+            # LLM returned exactly one tool call — we're ready to proceed
+
+            # 🔍 Check if the last message was a temporary retry instruction
+            last_msg = state["messages"][-1] if state["messages"] else None
+
+            is_retry_msg = (
+                isinstance(last_msg, SystemMessage) and
+                last_msg.metadata and
+                last_msg.metadata.get("retry_type") == "single_tool_call"
+            )
+
+            # If it was a retry message, remove it from the message history
+            if is_retry_msg:
+                pruned_messages = state["messages"][:-1]
+            else:
+                pruned_messages = state["messages"]
+
+            # Commit the valid assistant message and reset the retry counter
             return update_state(
                 state,
-                messages=state["messages"] + [llm_msg],
+                messages=pruned_messages + [llm_msg],
                 llm_response=None,
                 single_tool_call_requests=0
             )
+
 
         else:
             retry_count = state.get("single_tool_call_requests", 0)
 
             if retry_count == 0:
                 # First time asking for correction
-                guidance = SystemMessage(content="Please respond using only a single tool call.")
+                guidance = SystemMessage(
+                    content="Respond with a single tool for the previous instruction.",
+                    metadata={"retry_type": "single_tool_call"},
+                )
                 return update_state(
                     state,
                     messages=state["messages"] + [guidance],
                     llm_response=None,
-                    single_tool_call_requests=1
+                    single_tool_call_requests=1,
                 )
             else:
                 # Already asked — don't add another message
                 # Retry LLM with existing message history
                 return update_state(
                     state,
-                    llm_response=None
+                    llm_response=None,
                     # single_tool_call_requests stays the same
                 )
-
 
     async def _tool_node(self, state: AgentState) -> AgentState:
         """Extract tool call and send action to frontend."""
@@ -220,8 +240,7 @@ class JupyterBuddyAgent:
         ):
             return False
         return True
-    
-    
+
     def _decide_next_step(state: AgentState) -> str:
         llm_msg = state.get("llm_response")
         tool_calls = llm_msg.additional_kwargs.get("tool_calls", []) if llm_msg else []
@@ -232,7 +251,6 @@ class JupyterBuddyAgent:
             return "one_tool"
         else:
             return "retry"
-
 
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
