@@ -14,6 +14,7 @@ active_connections: Dict[str, WebSocket] = {}
 session_states: Dict[str, AgentState] = {}
 agent_instances: Dict[str, JupyterBuddyAgent] = {}
 
+
 # send_json function to send JSON messages to the WebSocket client
 async def send_json(session_id: str, message: Dict[str, Any]):
     """Send JSON message to WebSocket client."""
@@ -23,6 +24,7 @@ async def send_json(session_id: str, message: Dict[str, Any]):
             await websocket.send_json(message)
         except Exception as e:
             logger.error(f"WebSocket send failed for {session_id}: {e}")
+
 
 # Called when a new WebSocket connection is established
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
@@ -63,6 +65,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         agent_instances.pop(session_id, None)
         session_states.pop(session_id, None)
 
+
 async def handle_register_tools(session_id: str, data: Dict[str, Any]):
     """Handle tool registration message."""
     try:
@@ -72,8 +75,10 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
         llm = get_llm()
 
         # Create callback functions for the agent
-        async def send_response(payload): # called when the LLM produces a response for the user.
-            await send_json(session_id, payload) # send_json(session_id, payload)
+        async def send_response(
+            payload,
+        ):  # called when the LLM produces a response for the user.
+            await send_json(session_id, payload)  # send_json(session_id, payload)
 
         async def send_action(payload):
             await send_json(session_id, payload)
@@ -83,7 +88,7 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
             llm=llm,
             session_id=session_id,
             send_response_callback=send_response,
-            send_action_callback=send_action
+            send_action_callback=send_action,
         )
 
         # Store tools directly in the agent instance
@@ -93,21 +98,29 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
         agent_instances[session_id] = agent
         session_states[session_id] = {
             "messages": [],
+            "llm_response": None,
             "current_action": None,
-            "waiting_for_frontend": False,
+            "waiting_for_tool_response": False,  # ✅ new key
             "end_agent_execution": False,
-            "first_message": True
+            "first_message": True,
+            "single_tool_call_requests": 0,  # ✅ required for retry logic
         }
 
-        logger.info(f"Agent initialized for session {session_id} with {len(tools)} tools")
+        logger.info(
+            f"Agent initialized for session {session_id} with {len(tools)} tools"
+        )
 
     except Exception as e:
         logger.exception(f"Tool registration failed: {e}")
-        await send_json(session_id, {
-            "message": f"Tool registration failed: {str(e)}",
-            "session_id": session_id,
-            "actions": None
-        })
+        await send_json(
+            session_id,
+            {
+                "message": f"Tool registration failed: {str(e)}",
+                "session_id": session_id,
+                "actions": None,
+            },
+        )
+
 
 async def handle_user_message(session_id: str, data: Dict[str, Any]):
     """Handle user message."""
@@ -123,6 +136,7 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     # Process the message using the agent
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
+
 
 async def handle_action_result(session_id: str, data: Dict[str, Any]):
     """Handle action result from frontend."""
