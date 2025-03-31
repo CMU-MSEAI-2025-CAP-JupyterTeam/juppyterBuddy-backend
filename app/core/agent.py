@@ -19,7 +19,7 @@ AgentState = TypedDict(
         "messages": List[BaseMessage],
         "llm_response": Optional[AIMessage],
         "current_action": Optional[Dict],
-        "waiting_for_frontend": bool,
+        "waiting_for_tool_response": bool,
         "end_agent_execution": bool,
         "first_message": bool,
         "single_tool_call_requests": int,
@@ -94,7 +94,7 @@ class JupyterBuddyAgent:
     async def _llm_node(self, state: AgentState) -> AgentState:
         """Run LLM and return updated state with assistant response."""
         # Filter messages: remove any assistant message with missing tool response
-        relevant_history = self.state["messages"]
+        relevant_history = state["messages"]
 
         # Get a version of the LLM with tools bound to it
         llm_with_tools = self.llm.bind_tools(self.tools) if self.tools else self.llm
@@ -211,13 +211,13 @@ class JupyterBuddyAgent:
         return update_state(
             state,
             current_action=action,
-            waiting_for_frontend=True,
+            waiting_for_tool_response=True,
             end_agent_execution=False,
         )
 
     def _should_continue(self, state: AgentState) -> bool:
         """Determine if the agent should continue processing or end execution."""
-        if state.get("waiting_for_frontend", False) or state.get(
+        if state.get("waiting_for_tool_response", False) or state.get(
             "end_agent_execution", False
         ):
             return False
@@ -238,7 +238,7 @@ class JupyterBuddyAgent:
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
     ) -> AgentState:
         """Process user message and run LangGraph."""
-        if state["waiting_for_frontend"]:
+        if state["waiting_for_tool_response"]:
             await self.send_response(
                 {
                     "message": "Please wait for the previous operation to complete.",
@@ -262,6 +262,7 @@ class JupyterBuddyAgent:
             state["messages"].append(sys_msg)
             state["first_message"] = False
 
+        # Runs only if the agent is not waiting for frontend
         state["messages"].append(HumanMessage(content=user_input))
         return await self.graph.ainvoke(state)
 
@@ -297,7 +298,7 @@ class JupyterBuddyAgent:
             state,
             messages=state["messages"] + [tool_message],
             current_action=None,
-            waiting_for_frontend=False,
+            waiting_for_tool_response=False,
         )
 
         return await self.graph.ainvoke(updated_state)
