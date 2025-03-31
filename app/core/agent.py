@@ -38,22 +38,15 @@ def update_state(state: AgentState, **kwargs) -> AgentState:
     return new_state
 
 
-def should_go_to_tool_node(state: AgentState) -> bool:
-    """
-    Determines whether to proceed to the tool execution node.
-
-    Returns True if:
-    - The agent previously asked the LLM to retry due to multiple tool calls.
-    - The agent is not marked as done (`end_agent_execution` is False).
-
-    This prevents the graph from proceeding to tool execution if:
-    - The agent decided to stop (e.g. no tool calls returned).
-    """
+# Routing function to determine next step in the graph
+def routing_after_tool_validation(state: AgentState) -> str:
     if state.get("end_agent_execution", False):
-        return False
+        return "end_agent_execution"
+    elif state.get("multiple_tool_call_requests", 0) > 0:
+        return "retry"
+    else:
+        return "go_to_tool_call"
 
-    # If we asked the LLM to retry for a single tool, we're looping back
-    return state.get("multiple_tool_call_requests", 0) > 0
 
 class JupyterBuddyAgent:
     """
@@ -103,10 +96,11 @@ class JupyterBuddyAgent:
         builder.add_edge("llm", "tool_call_validator")
         builder.add_conditional_edges(
             "tool_call_validator",
-            should_go_to_tool_node,
+            routing_after_tool_validation,
             {
-                True: "llm",  # go back to LLM to retry with one tool call
-                False: "tools",  # exactly one tool found, proceed to tools node
+                "end_agent_execution": "__end__",
+                "retry": "llm",
+                "go_to_tool_call": "tools",
             },
         )
         self.graph = builder.compile()
@@ -178,7 +172,7 @@ class JupyterBuddyAgent:
             if retry_count == 0:
                 # First time asking for correction
                 guidance = SystemMessage(
-                    content="Respond with a single tool for the previous instruction.",
+                    content="You previously returned multiple tool calls. Retry with only ONE tool call.",
                     metadata={"retry_type": "single_tool_call"},
                 )
                 return update_state(

@@ -1,3 +1,5 @@
+from langchain_core.messages import AIMessage
+
 AIMessage(
     content="",
     additional_kwargs={
