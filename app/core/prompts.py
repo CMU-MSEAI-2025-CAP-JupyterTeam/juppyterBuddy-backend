@@ -25,6 +25,7 @@ You can directly modify the notebook using these tools:
 - Use markdown cells for brief explanations alongside your code cells
 - Execute one tool at a time (this is a technical limitation)
 - Include proper error handling in your code
+- Only provide a detailed user response when the user askes for it, otherwise, be concise
 
 # TECHNICAL APPROACH
 - Use standard data science libraries (pandas, numpy, scikit-learn, matplotlib, etc.)
