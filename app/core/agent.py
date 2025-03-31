@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, TypedDict
 
 from langchain_core.messages import (
     SystemMessage,
@@ -13,12 +13,15 @@ from langgraph.graph import StateGraph, END
 from langchain_core.language_models import BaseChatModel
 
 # AgentState definition for LangGraph
-class AgentState(Dict):
-    messages: List[BaseMessage]
-    current_action: Optional[Dict[str, Any]]
-    waiting_for_frontend: bool
-    end_agent_execution: bool
-    first_message: bool
+AgentState = TypedDict("AgentState", {
+    "messages": List[BaseMessage],
+    "llm_response": Optional[AIMessage],
+    "current_action": Optional[Dict],
+    "waiting_for_frontend": bool,
+    "end_agent_execution": bool,
+    "first_message": bool,
+    "single_tool_call_requests": int
+})
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -64,41 +67,81 @@ class JupyterBuddyAgent:
 
     async def _create_graph(self):
         """Define LangGraph with LLM and Tool execution flow."""
+        # create graph
         builder = StateGraph(AgentState)
+        
+        # add nodes
         builder.add_node("llm", self._llm_node)
+        builder.add_node("tool_call_validator", self._tool_call_validator_node)
         builder.add_node("tools", self._tool_node)
+        
+        # add edges
         builder.set_entry_point("llm")
-        builder.add_edge("llm", "tools")
-        builder.add_conditional_edges(
-            "tools",
-            self._should_continue,
-            {
-                True: "llm",
-                False: END,
-            },
-        )
-        self.graph = builder.compile()
+        builder.add_edge("llm", "tool_call_validator")
+        builder.add_conditional_edges("tool_call_validator", self._decide_next_step, {
+            "no_tool": END,
+            "one_tool": "tools",
+            "retry": "llm"
+        })
+
+        graph = builder.compile()
+
+       
 
     async def _llm_node(self, state: AgentState) -> AgentState:
         """Run LLM and return updated state with assistant response."""
-        logger.info(f"[LLM Node] Invoking LLM with {len(state['messages'])} messages")
-
         # Filter messages: remove any assistant message with missing tool response
-        filtered_messages = self._filter_tool_call_mismatch(state["messages"])
+        relevant_history = self.state["messages"]
 
         # Get a version of the LLM with tools bound to it
         llm_with_tools = self.llm.bind_tools(self.tools) if self.tools else self.llm
 
         # Call LLM
-        response = await llm_with_tools.ainvoke(filtered_messages)
-
+        response = await llm_with_tools.ainvoke(relevant_history)
+        
         updated = update_state(
             state,
-            messages=state["messages"] + [response],
-            end_agent_execution=False,
+            llm_response=response,
+            end_agent_execution=False
         )
+        logger.info(f"[LLM Node] Updated state: {updated}")
         return updated
 
+    
+    
+    async def _tool_call_validator_node(self, state: AgentState) -> AgentState:
+        llm_msg = state["llm_response"]
+        tool_calls = llm_msg.additional_kwargs.get("tool_calls", []) if llm_msg else []
+
+        if not tool_calls:
+            # No tool call → send message and end
+            await self.send_response({
+                "message": llm_msg.content,
+                "actions": None,
+                "session_id": state["session_id"]
+            })
+            return update_state(state, messages=state["messages"] + [llm_msg], llm_response=None, end_agent_execution=True)
+
+        elif len(tool_calls) == 1:
+            # Valid single tool call
+            return update_state(state, messages=state["messages"] + [llm_msg], llm_response=None)
+
+        else:
+            # Multiple tool calls → guidance
+            retry_count = state.get("single_tool_call_requests", 0)
+            if retry_count == 0:
+                guidance = SystemMessage(content="Please respond using only a single tool call.")
+            else:
+                guidance = SystemMessage(content="Respond with a single tool for the previous instruction.")
+
+            return update_state(
+                state,
+                messages=state["messages"] + [guidance],
+                llm_response=None,
+                single_tool_call_requests=retry_count + 1
+            )
+
+    
     async def _tool_node(self, state: AgentState) -> AgentState:
         """Extract tool call and send action to frontend."""
         messages = state["messages"]
