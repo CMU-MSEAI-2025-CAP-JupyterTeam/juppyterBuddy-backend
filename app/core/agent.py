@@ -220,6 +220,19 @@ class JupyterBuddyAgent:
         ):
             return False
         return True
+    
+    
+    def _decide_next_step(state: AgentState) -> str:
+        llm_msg = state.get("llm_response")
+        tool_calls = llm_msg.additional_kwargs.get("tool_calls", []) if llm_msg else []
+
+        if not tool_calls:
+            return "no_tool"
+        elif len(tool_calls) == 1:
+            return "one_tool"
+        else:
+            return "retry"
+
 
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
