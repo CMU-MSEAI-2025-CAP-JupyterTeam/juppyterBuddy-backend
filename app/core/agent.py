@@ -111,7 +111,7 @@ class JupyterBuddyAgent:
         relevant_history = state["messages"]
 
         # Get a version of the LLM with tools bound to it
-        llm_with_tools = self.llm.bind_tools(self.tools) if self.tools else self.llm
+        llm_with_tools = self.llm.bind_tools(self.tools, parallel_tool_calls=False) if self.tools else self.llm
 
         # Call LLM
         response = await llm_with_tools.ainvoke(relevant_history)
