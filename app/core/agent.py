@@ -84,7 +84,7 @@ class JupyterBuddyAgent:
             "retry": "llm"
         })
 
-        graph = builder.compile()
+        self.graph = builder.compile()
 
        
 
