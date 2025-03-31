@@ -196,10 +196,15 @@ class JupyterBuddyAgent:
         assistant_msg = state["messages"][-1]
 
         # 🔍 Extract the single tool call (guaranteed to exist and be valid)
-        tool_call = assistant_msg.additional_kwargs["tool_calls"][0]
-        tool_name = tool_call["function"]["name"]
+        tool_calls = getattr(assistant_msg, "tool_calls", None)
+        if not tool_calls or len(tool_calls) != 1:
+            raise ValueError("Expected exactly one tool call from the assistant.")
+        tool_call = tool_calls[0]
+
+        # Extract tool call details
+        tool_name = tool_call["name"]
         tool_call_id = tool_call["id"]
-        args = json.loads(tool_call["function"].get("arguments", "{}"))
+        args = tool_call["args"]  # already parsed
 
         # 🛠️ Build the structured tool action to send to the frontend
         action = {
