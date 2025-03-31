@@ -133,9 +133,9 @@ class JupyterBuddyAgent:
             last_msg = state["messages"][-1] if state["messages"] else None
 
             is_retry_msg = (
-                isinstance(last_msg, SystemMessage) and
-                last_msg.metadata and
-                last_msg.metadata.get("retry_type") == "single_tool_call"
+                isinstance(last_msg, SystemMessage)
+                and last_msg.metadata
+                and last_msg.metadata.get("retry_type") == "single_tool_call"
             )
 
             # If it was a retry message, remove it from the message history
@@ -149,9 +149,8 @@ class JupyterBuddyAgent:
                 state,
                 messages=pruned_messages + [llm_msg],
                 llm_response=None,
-                single_tool_call_requests=0
+                single_tool_call_requests=0,
             )
-
 
         else:
             retry_count = state.get("single_tool_call_requests", 0)
@@ -178,60 +177,43 @@ class JupyterBuddyAgent:
                 )
 
     async def _tool_node(self, state: AgentState) -> AgentState:
-        """Extract tool call and send action to frontend."""
-        messages = state["messages"]
-        last = messages[-1] if messages else None
-        tool_calls = getattr(last, "additional_kwargs", {}).get("tool_calls", [])
+        # By this point, we are guaranteed:
+        # - `state["messages"]` contains a valid assistant message
+        # - That assistant message has exactly one tool call
+        # - It was already validated and appended in the previous step
 
-        if not tool_calls:
-            # No tool call, just send response
-            await self.send_response(
-                {
-                    "message": last.content if last else "",
-                    "actions": None,
-                    "session_id": self.session_id,
-                }
-            )
-            return update_state(state, end_agent_execution=True)
+        # Get the assistant message with the tool call (always the last one)
+        assistant_msg = state["messages"][-1]
 
-        # Process the first tool call only
-        tool_call = tool_calls[0]
+        # 🔍 Extract the single tool call (guaranteed to exist and be valid)
+        tool_call = assistant_msg.additional_kwargs["tool_calls"][0]
+        tool_name = tool_call["function"]["name"]
+        tool_call_id = tool_call["id"]
+        args = json.loads(tool_call["function"].get("arguments", "{}"))
 
-        try:
-            # Parse arguments as JSON
-            args = json.loads(tool_call["function"].get("arguments", "{}"))
+        # 🛠️ Build the structured tool action to send to the frontend
+        action = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "parameters": args,
+        }
 
-            # Create action payload
-            action = {
-                "tool_name": tool_call["function"]["name"],
-                "parameters": args,
-                "tool_call_id": tool_call["id"],
+        # Send the action to the frontend (via WebSocket or whatever your implementation uses)
+        await self.send_action(
+            {
+                "message": assistant_msg.content,  # Optional assistant message context
+                "actions": [action],  # Always a list with one tool
+                "session_id": self.session_id,
             }
+        )
 
-            # Send action to frontend
-            await self.send_action(
-                {
-                    "message": last.content,
-                    "actions": [action],
-                    "session_id": self.session_id,
-                }
-            )
-
-            return update_state(
-                state,
-                current_action=action,
-                waiting_for_frontend=True,
-                end_agent_execution=False,
-            )
-        except Exception as e:
-            logger.error(f"Error processing tool call: {e}")
-            # Add error message to conversation and end execution
-            return update_state(
-                state,
-                messages=state["messages"]
-                + [SystemMessage(content=f"Error: {str(e)}")],
-                end_agent_execution=True,
-            )
+        # Update state:
+        return update_state(
+            state,
+            current_action=action,
+            waiting_for_frontend=True,
+            end_agent_execution=False,
+        )
 
     def _should_continue(self, state: AgentState) -> bool:
         """Determine if the agent should continue processing or end execution."""
