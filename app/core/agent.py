@@ -37,13 +37,23 @@ def update_state(state: AgentState, **kwargs) -> AgentState:
     new_state.update(kwargs)
     return new_state
 
-def decide_if_multiple_tools(state: AgentState) -> bool:
+
+def should_go_to_tool_node(state: AgentState) -> bool:
     """
-    Return True if the agent previously encountered multiple tool calls
-    and asked the LLM to retry. Otherwise, return False.
+    Determines whether to proceed to the tool execution node.
+
+    Returns True if:
+    - The agent previously asked the LLM to retry due to multiple tool calls.
+    - The agent is not marked as done (`end_agent_execution` is False).
+
+    This prevents the graph from proceeding to tool execution if:
+    - The agent decided to stop (e.g. no tool calls returned).
     """
-    retry_count = state.get("multiple_tool_call_requests", 0)
-    return retry_count > 0
+    if state.get("end_agent_execution", False):
+        return False
+
+    # If we asked the LLM to retry for a single tool, we're looping back
+    return state.get("multiple_tool_call_requests", 0) > 0
 
 class JupyterBuddyAgent:
     """
@@ -93,9 +103,9 @@ class JupyterBuddyAgent:
         builder.add_edge("llm", "tool_call_validator")
         builder.add_conditional_edges(
             "tool_call_validator",
-            decide_if_multiple_tools,
+            should_go_to_tool_node,
             {
-                True: "llm",     # go back to LLM to retry with one tool call
+                True: "llm",  # go back to LLM to retry with one tool call
                 False: "tools",  # exactly one tool found, proceed to tools node
             },
         )
@@ -274,7 +284,13 @@ class JupyterBuddyAgent:
 
         # Extract the result from results array
         results = result_data.get("results", [])
-        result = results[0] if results else {"success": False, "error": "Empty result"}
+        logger.info(f"Tool result from frontend: {results}")
+        if not results:
+            error_msg = "Tool execution returned no results. Check the frontend tool implementation."
+            logger.error(error_msg)
+            result = {"success": False, "error": error_msg}
+        else:
+            result = results[0]
 
         # Create tool message
         content = (
