@@ -1,0 +1,181 @@
+@startuml JupyterBuddyArchitecture
+
+' Define styles for the diagram
+skinparam class {
+  BackgroundColor white
+  ArrowColor #2c3e50
+  BorderColor #34495e
+}
+
+skinparam sequence {
+  ArrowColor #2c3e50
+  LifeLineBorderColor #34495e
+  LifeLineBackgroundColor #f5f5f5
+}
+
+skinparam note {
+  BackgroundColor #fffacd
+  BorderColor #e6db74
+}
+
+' Define classes and their relationships for WebSocket management
+class WebSocketManager {
+  -active_connections: Dict[str, WebSocket]
+  -session_agents: Dict[str, JupyterBuddyAgent]
+  -session_tools: Dict[str, List[Dict]]
+  +connect(websocket, session_id)
+  +disconnect(session_id)
+  +send_message(session_id, message)
+  +create_callback_for_session(session_id)
+  -_prepare_openai_tools(tools_json)
+  +process_register_tools(session_id, data)
+  +process_user_message(session_id, data)
+  +process_action_result(session_id, data)
+  +check_session_status(session_id)
+  +handle_message(session_id, message)
+}
+
+' Define classes for the JupyterBuddy Agent
+class JupyterBuddyAgent {
+  -llm: LLM
+  -send_response: Callback
+  -send_action: Callback
+  -session_id: str
+  -llm_node: LLMNode
+  -tool_executor: ToolExecutionerNode
+  -graph: StateGraph
+  +create(llm, send_response_callback, send_action_callback, session_id)
+  +initialize()
+  -create_agent_graph()
+  -should_continue_execution(state)
+  +handle_agent_input(session_id, data)
+}
+
+class LLMNode {
+  -llm: LLM
+  +invoke(state)
+  -_select_messages(messages)
+  -_format_conversation_history(messages)
+}
+
+class ToolExecutionerNode {
+  -send_response: Callback
+  -send_action: Callback
+  -session_id: str
+  +invoke(state)
+}
+
+class AgentState <<TypedDict>> {
+  +messages: List[BaseMessage]
+  +output_to_user: Optional[str]
+  +current_action: Optional[Dict]
+  +waiting_for_frontend: bool
+  +end_agent_execution: bool
+  +first_message: bool
+}
+
+' Define the LangChain/LangGraph components
+class StateGraph {
+  +add_node(name, func)
+  +add_edge(from, to)
+  +add_conditional_edges(from, condition, targets)
+  +set_entry_point(node)
+  +compile()
+  +ainvoke(state)
+}
+
+class BaseMessage {}
+class SystemMessage extends BaseMessage {}
+class HumanMessage extends BaseMessage {}
+class AIMessage extends BaseMessage {}
+class ToolMessage extends BaseMessage {}
+
+' Define shared structures and helper functions
+class "global_session_states" {
+  +Dict[str, AgentState]
+}
+
+' Define utility functions for the Agent
+class "get_session_state()" {
+  +Function(session_id: str): AgentState
+}
+
+class "update_session_state()" {
+  +Function(session_id: str, state: AgentState): None
+}
+
+class "update_state()" {
+  +Function(state: AgentState, **kwargs): AgentState
+}
+
+' Define Frontend components
+class JupyterLabExtension {
+  +App Component
+  +Tools API
+  +notebookHelpers
+}
+
+' Define the relationships between components
+WebSocketManager --> JupyterBuddyAgent : creates and manages
+JupyterBuddyAgent --> LLMNode : uses
+JupyterBuddyAgent --> ToolExecutionerNode : uses
+JupyterBuddyAgent --> StateGraph : creates and uses
+LLMNode ..> AgentState : reads/updates
+ToolExecutionerNode ..> AgentState : reads/updates
+WebSocketManager ..> "get_session_state()" : calls
+JupyterBuddyAgent ..> "get_session_state()" : calls
+JupyterBuddyAgent ..> "update_session_state()" : calls
+LLMNode ..> "update_state()" : calls
+ToolExecutionerNode ..> "update_state()" : calls
+WebSocketManager ..> "global_session_states" : accesses
+JupyterLabExtension <--> WebSocketManager : communicates via WebSocket
+
+' Define the component connections
+WebSocketManager -[#blue]-> JupyterBuddyAgent : "register_tools"
+WebSocketManager -[#green]-> JupyterBuddyAgent : "user_message" 
+WebSocketManager -[#red]-> JupyterBuddyAgent : "action_result"
+JupyterBuddyAgent -[#purple]-> WebSocketManager : "send_response"
+JupyterBuddyAgent -[#orange]-> WebSocketManager : "send_action"
+JupyterBuddyAgent -[#blue]-> LLMNode : invokes
+JupyterBuddyAgent -[#green]-> ToolExecutionerNode : invokes
+LLMNode -[#red]-> StateGraph : returns to
+ToolExecutionerNode -[#purple]-> StateGraph : returns to
+
+' Add notes for better understanding
+note top of WebSocketManager
+  Manages WebSocket connections
+  and routes messages between
+  frontend and backend
+end note
+
+note right of JupyterBuddyAgent
+  Orchestrates the LLM and Tool
+  execution nodes in a state graph
+end note
+
+note bottom of LLMNode
+  Processes user input through LLM
+  and determines next actions
+end note
+
+note bottom of ToolExecutionerNode
+  Handles the execution of tools
+  based on LLM decisions
+end note
+
+note left of "global_session_states"
+  Global dictionary that maintains
+  state across WebSocket reconnections
+end note
+
+' Define the execution flow
+legend right
+  |= Color |= Flow |
+  |<#blue>| Tools Registration |
+  |<#green>| User Message |
+  |<#red>| Action Result |
+  |<#purple>| Response to User |
+  |<#orange>| Action to Frontend |
+endlegend
+
+@enduml

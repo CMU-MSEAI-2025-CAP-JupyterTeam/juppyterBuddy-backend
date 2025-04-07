@@ -1,0 +1,212 @@
+@startuml JupyterBuddySequence
+
+' Define styles
+skinparam sequence {
+  ArrowColor #2c3e50
+  LifeLineBorderColor #34495e
+  LifeLineBackgroundColor #f5f5f5
+  ParticipantBorderColor #3498db
+  ParticipantBackgroundColor #ecf0f1
+  ParticipantFontColor #2c3e50
+  ActorBorderColor #2c3e50
+  ActorBackgroundColor #ecf0f1
+  ActorFontColor #2c3e50
+}
+
+' Define participants
+actor User
+participant "JupyterLab\nFrontend" as Frontend
+participant "WebSocket\nManager" as WSManager
+participant "JupyterBuddy\nAgent" as Agent
+participant "LLMNode" as LLMNode
+participant "ToolExecutioner\nNode" as ToolNode
+participant "global_session_\nstates" as GlobalState
+participant "LLM" as LLM
+
+' Initialize sequence
+== Initialization ==
+
+User -> Frontend: Open JupyterBuddy
+activate Frontend
+
+Frontend -> WSManager: WebSocket Connection
+activate WSManager
+WSManager -> WSManager: connect(websocket, session_id)
+WSManager --> Frontend: Connection Established
+
+Frontend -> WSManager: register_tools
+note right: Send tool definitions in OpenAI format
+WSManager -> GlobalState: get_session_state(session_id)
+activate GlobalState
+GlobalState --> WSManager: New Empty State
+deactivate GlobalState
+
+WSManager -> Agent: create(llm, callbacks, session_id)
+activate Agent
+Agent -> LLMNode: initialize
+activate LLMNode
+LLMNode --> Agent: initialized
+deactivate LLMNode
+
+Agent -> ToolNode: initialize
+activate ToolNode
+ToolNode --> Agent: initialized
+deactivate ToolNode
+
+Agent -> Agent: create_agent_graph()
+Agent --> WSManager: Agent Created
+deactivate Agent
+
+WSManager --> Frontend: Tools Registered
+deactivate WSManager
+
+== User Message Processing ==
+
+User -> Frontend: Send Message
+activate Frontend
+Frontend -> WSManager: user_message
+activate WSManager
+note right: Includes message and notebook context
+
+WSManager -> GlobalState: get_session_state(session_id)
+activate GlobalState
+GlobalState --> WSManager: Current State
+deactivate GlobalState
+
+WSManager -> Agent: handle_agent_input(session_id, data)
+activate Agent
+
+note over Agent: Check if waiting for frontend
+note over Agent: Add system message with notebook context\nif this is the first message
+
+Agent -> Agent: Add HumanMessage to messages
+
+Agent -> Agent: graph.ainvoke(current_state)
+activate Agent #FFBBBB
+
+Agent -> LLMNode: invoke(state)
+activate LLMNode
+LLMNode -> LLMNode: _select_messages(messages)
+note right: Select system message + recent messages\n+ tool call pairs
+
+LLMNode -> LLM: invoke(messages_to_use)
+activate LLM
+LLM --> LLMNode: response
+deactivate LLM
+
+LLMNode -> LLMNode: Add response to messages
+LLMNode --> Agent: updated state
+deactivate LLMNode
+
+Agent -> ToolNode: invoke(state)
+activate ToolNode
+
+ToolNode -> ToolNode: Extract tool calls from last message
+
+alt Multiple Tool Calls
+    ToolNode -> ToolNode: Create ToolMessage for each tool call
+    ToolNode --> Agent: updated state (continue to LLM)
+else Single Tool Call
+    ToolNode -> Frontend: send_action(message, actions, session_id)
+    activate Frontend
+    ToolNode --> Agent: updated state (waiting for frontend)
+    deactivate Frontend
+else No Tool Calls
+    ToolNode -> Frontend: send_response(message, session_id)
+    activate Frontend
+    ToolNode --> Agent: updated state (execution complete)
+    deactivate Frontend
+end
+deactivate ToolNode
+
+Agent -> GlobalState: update_session_state(session_id, state)
+deactivate Agent #FFBBBB
+
+Agent --> WSManager: Agent Processing Complete
+deactivate Agent
+
+WSManager --> Frontend: Action or Response
+deactivate WSManager
+deactivate Frontend
+
+== Tool Execution Results ==
+
+Frontend -> Frontend: Execute Tool
+activate Frontend
+Frontend -> WSManager: action_result
+activate WSManager
+note right: Includes results from tool execution
+
+WSManager -> GlobalState: get_session_state(session_id)
+activate GlobalState
+GlobalState --> WSManager: Current State
+deactivate GlobalState
+
+WSManager -> Agent: handle_agent_input(session_id, data)
+activate Agent
+
+Agent -> Agent: Create ToolMessage from result
+Agent -> Agent: graph.ainvoke(current_state)
+activate Agent #FFBBBB
+
+Agent -> LLMNode: invoke(state)
+activate LLMNode
+LLMNode -> LLM: invoke(messages_to_use)
+activate LLM
+LLM --> LLMNode: response
+deactivate LLM
+LLMNode --> Agent: updated state
+deactivate LLMNode
+
+Agent -> ToolNode: invoke(state)
+activate ToolNode
+ToolNode -> Frontend: send_response or send_action
+activate Frontend
+ToolNode --> Agent: updated state
+deactivate ToolNode
+deactivate Frontend
+
+Agent -> GlobalState: update_session_state(session_id, state)
+deactivate Agent #FFBBBB
+
+Agent --> WSManager: Agent Processing Complete
+deactivate Agent
+
+WSManager --> Frontend: Response or Next Action
+deactivate WSManager
+
+Frontend --> User: Display Response
+deactivate Frontend
+
+== WebSocket Disconnection ==
+
+User -> Frontend: Close JupyterBuddy
+activate Frontend
+Frontend -> WSManager: Disconnect
+activate WSManager
+WSManager -> WSManager: disconnect(session_id)
+note right: Agent instance is deleted\nbut session state remains in global_session_states
+WSManager --> Frontend: Disconnected
+deactivate WSManager
+deactivate Frontend
+
+== Reconnection (Later) ==
+
+User -> Frontend: Reopen JupyterBuddy
+activate Frontend
+Frontend -> WSManager: WebSocket Connection
+activate WSManager
+WSManager -> WSManager: connect(websocket, session_id)
+
+WSManager -> GlobalState: get_session_state(session_id)
+activate GlobalState
+GlobalState --> WSManager: Existing State (Conversation History Preserved)
+deactivate GlobalState
+
+note over WSManager: Conversation continues with previous context\neven though a new Agent instance is created
+
+WSManager --> Frontend: Connection Established
+deactivate WSManager
+deactivate Frontend
+
+@enduml

@@ -1,246 +1,154 @@
-"""
-JupyterBuddy WebSocket Communication Module
-
-This module handles real-time communication between the JupyterLab frontend
-and backend via WebSockets. It routes messages between the frontend and the
-JupyterBuddy Agent, handling session management and tool registration.
-"""
-
 import json
-import os
 import logging
-from typing import Dict, Any, List, Optional
-from fastapi import WebSocket, WebSocketDisconnect
+from typing import Dict, Any
 
-# Import the Agent class and LLM
-from app.core.agent import JupyterBuddyAgent, get_session_state
+from fastapi import WebSocket, WebSocketDisconnect
+from app.core.agent import JupyterBuddyAgent, AgentState
 from app.core.llm import get_llm
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-class WebSocketManager:
-    """
-    Manages WebSocket connections and message routing for JupyterBuddy.
-    """
-    
-    def __init__(self):
-        """Initialize the WebSocket manager."""
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.session_agents: Dict[str, JupyterBuddyAgent] = {}
-        self.session_tools: Dict[str, List[Dict[str, Any]]] = {}
-    
-    async def connect(self, websocket: WebSocket, session_id: str):
-        """Handle new WebSocket connection."""
-        logger.info(f"WebSocket connection established for session {session_id}")
-        self.active_connections[session_id] = websocket
-        # Agent will be created when tools are registered
-    
-    async def disconnect(self, session_id: str):
-        """Handle WebSocket disconnection."""
-        if session_id in self.active_connections:
-            logger.info(f"WebSocket disconnected for session {session_id}")
-            del self.active_connections[session_id]
-        
-        # Clean up session resources
-        if session_id in self.session_agents:
-            del self.session_agents[session_id]
-        if session_id in self.session_tools:
-            del self.session_tools[session_id]
-    
-    async def send_message(self, session_id: str, message: Dict[str, Any]):
-        """Send a message to a specific WebSocket client."""
-        if session_id in self.active_connections:
-            await self.active_connections[session_id].send_text(json.dumps(message))
-    
-    async def create_callback_for_session(self, session_id: str):
-        """Create an async callback function for sending messages to a specific session."""
-        async def callback(msg: Dict[str, Any]):
-            await self.send_message(session_id, msg)
-        return callback
-    
-    def _prepare_openai_tools(self, tools_json: str) -> List[Dict[str, Any]]:
-        """
-        Parse the tools JSON from frontend which is already in OpenAI format.
-        No conversion needed since frontend now sends in the correct format.
-        """
+# In-memory storage
+active_connections: Dict[str, WebSocket] = {}
+session_states: Dict[str, AgentState] = {}
+agent_instances: Dict[str, JupyterBuddyAgent] = {}
+
+
+# send_json function to send JSON messages to the WebSocket client
+async def send_json(session_id: str, message: Dict[str, Any]):
+    """Send JSON message to WebSocket client."""
+    websocket = active_connections.get(session_id)
+    if websocket:
         try:
-            return json.loads(tools_json)
+            await websocket.send_json(message)
         except Exception as e:
-            logger.exception(f"Error parsing tools JSON: {e}")
-            return []
+            logger.error(f"WebSocket send failed for {session_id}: {e}")
 
-    async def process_register_tools(self, session_id: str, data: Dict[str, Any]):
-        """Handle tool registration message from frontend."""
-        tools_json = data.get("data")
-        if not tools_json:
-            return
-        
-        try:
-            # Parse tools directly - already in OpenAI format
-            openai_tools = self._prepare_openai_tools(tools_json)
-            
-            # Store tools for this session
-            self.session_tools[session_id] = openai_tools
-            
-            # Create the agent with the LLM that has tools bound to it
-            llm = get_llm(tools=openai_tools)
-            
-            # Create async callback for this session
-            message_callback = await self.create_callback_for_session(session_id)
-            
-            # Use the async factory method to create and initialize the agent
-            # Pass session_id to the agent constructor
-            self.session_agents[session_id] = await JupyterBuddyAgent.create(
-                llm=llm,
-                send_response_callback=message_callback,
-                send_action_callback=message_callback,
-                session_id=session_id  # Pass session_id here
-            )
-            
-            logger.info(f"Created agent for session {session_id} with {len(openai_tools)} tools")
-        except Exception as e:
-            logger.exception(f"Error registering tools: {str(e)}")
 
-    async def process_user_message(self, session_id: str, data: Dict[str, Any]):
-        """Handle user message from frontend."""
-        if session_id not in self.session_agents:
-            logger.error(f"No agent found for session {session_id}")
-            await self.send_message(session_id, {
-                "message": "Error: System initialization incomplete. Please refresh the page."
-            })
-            return
-        
-        # Check for pending tool calls first
-        session_state = get_session_state(session_id)
-        if session_state.get("pending_tool_calls"):
-            pending_count = len(session_state.get("pending_tool_calls", {}))
-            logger.warning(f"User message received with {pending_count} pending tool calls")
-            
-            # Send a message to the user to wait for operations to complete
-            await self.send_message(session_id, {
-                "message": f"Please wait for the {pending_count} current operations to complete. Some commands may take a while to execute."
-            })
-            return
-        
-        # Process message with the agent
-        agent = self.session_agents[session_id]
-        await agent.handle_agent_input(session_id, {
-            "type": "user_message",
-            "data": data.get("data", ""),
-            "notebook_context": data.get("notebook_context")
-        })
-    
-    async def process_action_result(self, session_id: str, data: Dict[str, Any]):
-        """Handle action result from frontend."""
-        if session_id not in self.session_agents:
-            logger.error(f"No agent found for session {session_id}")
-            return
-        
-        # Get the data with results array
-        action_data = data.get("data", {})
-        action_results = action_data.get("results", [])
-        
-        # Log information about received results
-        logger.info(f"Received {len(action_results)} action results from session {session_id}")
-        
-        # Check if any results have errors
-        errors = [result.get("error") for result in action_results if result.get("error")]
-        
-        # Create agent input with the complete results and any errors
-        agent_input = {
-            "type": "action_result",
-            "data": {
-                "results": action_results,  # Pass all results to the agent
-                "notebook_context": action_data.get("notebook_context")
-            }
-        }
-        
-        # If there are errors, include them in the state update
-        if errors:
-            error_message = "; ".join([err for err in errors if err])
-            if error_message:
-                agent_input["error"] = {"error_message": error_message}
-        
-        # Pass action result to agent for further processing
-        agent = self.session_agents[session_id]
-        await agent.handle_agent_input(session_id, agent_input)
-    
-    async def check_session_status(self, session_id: str) -> Dict[str, Any]:
-        """Get the current status of a session."""
-        if session_id not in self.session_agents:
-            return {
-                "status": "error",
-                "message": "Session not found or not initialized"
-            }
-        
-        session_state = get_session_state(session_id)
-        pending_count = len(session_state.get("pending_tool_calls", {}))
-        
-        status = {
-            "status": "ready" if pending_count == 0 else "busy",
-            "pending_operations": pending_count,
-            "error": session_state.get("error")
-        }
-        
-        return status
-    
-    # Main message handler
-    async def handle_message(self, session_id: str, message: str):
-        """Route incoming WebSocket messages based on type."""
-        try:
-            data = json.loads(message)
-            message_type = data.get("type")
-            
-            if message_type == "register_tools":
-                await self.process_register_tools(session_id, data)
-            elif message_type == "user_message":
-                await self.process_user_message(session_id, data)
-            elif message_type == "action_result":
-                await self.process_action_result(session_id, data)
-            elif message_type == "check_status":
-                # New message type to check if operations are still pending
-                status = await self.check_session_status(session_id)
-                await self.send_message(session_id, {
-                    "type": "status_update",
-                    "data": status
-                })
-            else:
-                logger.warning(f"Unknown message type: {message_type}")
-        except Exception as e:
-            logger.exception(f"Error processing message: {str(e)}")
-            await self.send_message(session_id, {
-                "message": f"An error occurred: {str(e)}"
-            })
-
-# Create a singleton instance
-connection_manager = WebSocketManager()
-
-# FastAPI WebSocket endpoint handler
+# Called when a new WebSocket connection is established
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    """Handle WebSocket connections and messages."""
+    """Handle WebSocket connection and messages."""
+    await websocket.accept()
+    active_connections[session_id] = websocket
+    logger.info(f"WebSocket connected: {session_id}")
+
     try:
-        logger.info(f"WebSocket connection attempt for session {session_id}")
-        
-        # Accept the WebSocket connection
-        await websocket.accept()
-        logger.info(f"WebSocket connection accepted for session {session_id}")
-        
-        # Let connection manager know about the connection
-        await connection_manager.connect(websocket, session_id)
-        
-        # Start message loop
         while True:
-            logger.info(f"Waiting for message from session {session_id}")
             message = await websocket.receive_text()
-            logger.info(f"Received message from session {session_id}")
-            await connection_manager.handle_message(session_id, message)
+            data = json.loads(message)
+            msg_type = data.get("type")
+
+            if msg_type == "register_tools":
+                await handle_register_tools(session_id, data)
+            elif msg_type == "user_message":
+                await handle_user_message(session_id, data)
+            elif msg_type == "action_result":
+                await handle_action_result(session_id, data)
+            else:
+                logger.warning(f"Unknown message type from {session_id}: {msg_type}")
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for session {session_id}")
-        await connection_manager.disconnect(session_id)
+        logger.info(f"WebSocket disconnected: {session_id}")
+        # Clean up resources
+        active_connections.pop(session_id, None)
+        agent_instances.pop(session_id, None)
+        session_states.pop(session_id, None)
     except Exception as e:
-        logger.exception(f"WebSocket error for session {session_id}: {str(e)}")
+        logger.exception(f"Unexpected error in WebSocket handler: {e}")
         try:
-            await connection_manager.disconnect(session_id)
-        except Exception as inner_e:
-            logger.exception(f"Error during disconnect cleanup: {str(inner_e)}")
+            # Try to close the connection cleanly
+            await websocket.close(code=1011)
+        except:
+            pass
+        # Clean up resources
+        active_connections.pop(session_id, None)
+        agent_instances.pop(session_id, None)
+        session_states.pop(session_id, None)
+
+
+async def handle_register_tools(session_id: str, data: Dict[str, Any]):
+    """Handle tool registration message."""
+    try:
+        tools = json.loads(data.get("data", "[]"))
+
+        # Initialize LLM
+        llm = get_llm()
+
+        # Create callback functions for the agent
+        async def send_response(
+            payload,
+        ):  # called when the LLM produces a response for the user.
+            await send_json(session_id, payload)  # send_json(session_id, payload)
+
+        async def send_action(payload):
+            await send_json(session_id, payload)
+
+        # Create the agent instance
+        agent = await JupyterBuddyAgent.create(
+            llm=llm,
+            session_id=session_id,
+            send_response_callback=send_response,
+            send_action_callback=send_action,
+        )
+
+        # Store tools directly in the agent instance
+        agent.tools = tools
+
+        # Initialize session state
+        agent_instances[session_id] = agent
+        session_states[session_id] = {
+            "messages": [],
+            "llm_response": None,
+            "current_action": None,
+            "waiting_for_tool_response": False, 
+            "end_agent_execution": False,
+            "first_message": True,
+            "multiple_tool_call_requests": 0,
+             "session_id": session_id,
+        }
+
+        logger.info(
+            f"Agent initialized for session {session_id} with {len(tools)} tools"
+        )
+
+    except Exception as e:
+        logger.exception(f"Tool registration failed: {e}")
+        await send_json(
+            session_id,
+            {
+                "message": f"Tool registration failed: {str(e)}",
+                "session_id": session_id,
+                "actions": None,
+            },
+        )
+
+
+async def handle_user_message(session_id: str, data: Dict[str, Any]):
+    """Handle user message."""
+    agent = agent_instances.get(session_id)
+    if not agent:
+        logger.warning(f"Agent not ready for session {session_id}")
+        return
+
+    state = session_states.get(session_id)
+    user_input = data.get("data")
+    notebook_ctx = data.get("notebook_context")
+
+    # Process the message using the agent
+    updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
+    session_states[session_id] = updated_state
+
+
+async def handle_action_result(session_id: str, data: Dict[str, Any]):
+    """Handle action result from frontend."""
+    agent = agent_instances.get(session_id)
+    if not agent:
+        logger.warning(f"Agent not ready for session {session_id}")
+        return
+
+    state = session_states.get(session_id)
+    result_payload = data.get("data", {})
+
+    # Process the tool result
+    updated_state = await agent.handle_tool_result(state, result_payload)
+    session_states[session_id] = updated_state
