@@ -115,9 +115,20 @@ class JupyterBuddyAgent:
 
         # Call LLM
         response = await llm_with_tools.ainvoke(relevant_history)
-
-        updated = update_state(state, llm_response=response, end_agent_execution=False)
-        logger.info(f"[LLM Node] Updated state: {updated}")
+        
+        # Extract tool calls from the response (wherever they might be)
+        tool_calls = []
+        if hasattr(response, "additional_kwargs") and "tool_calls" in response.additional_kwargs:
+            tool_calls = response.additional_kwargs["tool_calls"]
+        
+        # Create minimal message with just content and tool calls
+        minimal_llm_msg = AIMessage(
+            content=response.content or "",
+            additional_kwargs={"tool_calls": tool_calls} if tool_calls else {}
+        )
+        
+        updated = update_state(state, llm_response=minimal_llm_msg, end_agent_execution=False)
+        logger.info(f"[LLM Node] Received response with {len(tool_calls)} tool calls")
         return updated
 
     async def _tool_call_validator_node(self, state: AgentState) -> AgentState:
