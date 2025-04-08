@@ -115,9 +115,20 @@ class JupyterBuddyAgent:
 
         # Call LLM
         response = await llm_with_tools.ainvoke(relevant_history)
-
-        updated = update_state(state, llm_response=response, end_agent_execution=False)
-        logger.info(f"[LLM Node] Updated state: {updated}")
+        
+        # Extract tool calls from the response (wherever they might be)
+        tool_calls = []
+        if hasattr(response, "additional_kwargs") and "tool_calls" in response.additional_kwargs:
+            tool_calls = response.additional_kwargs["tool_calls"]
+        
+        # Create minimal message with just content and tool calls
+        minimal_llm_msg = AIMessage(
+            content=response.content or "",
+            additional_kwargs={"tool_calls": tool_calls} if tool_calls else {}
+        )
+        
+        updated = update_state(state, llm_response=minimal_llm_msg, end_agent_execution=False)
+        logger.info(f"[LLM Node] Received response with {len(tool_calls)} tool calls")
         return updated
 
     async def _tool_call_validator_node(self, state: AgentState) -> AgentState:
@@ -279,6 +290,7 @@ class JupyterBuddyAgent:
         # Extract the result from results array
         results = result_data.get("results", [])
         logger.info(f"Tool result from frontend: {results}")
+        
         if not results:
             error_msg = "Tool execution returned no results. Check the frontend tool implementation."
             logger.error(error_msg)
@@ -286,17 +298,23 @@ class JupyterBuddyAgent:
         else:
             result = results[0]
 
-        # Create tool message
-        content = (
-            json.dumps(result.get("result", {}))
-            if result.get("success")
-            else result.get("error", "Unknown error")
-        )
+        # Check for different types of errors
+        tool_operation_failed = not result.get("success", True)
+        cell_execution_failed = result.get("result", {}).get("status") == "error"
+        
+        # Determine the appropriate message content
+        if tool_operation_failed:
+            content = result.get("error", "Unknown tool operation error")
+        elif cell_execution_failed:
+            content = result.get("result", {}).get("error", "Unknown code execution error")
+        else:
+            content = json.dumps(result.get("result", {}))
 
         tool_message = ToolMessage(
             content=content,
             tool_call_id=current_action["tool_call_id"],
             name=current_action["tool_name"],
+            status="error" if (tool_operation_failed or cell_execution_failed) else "success"
         )
 
         # Update state and continue execution
