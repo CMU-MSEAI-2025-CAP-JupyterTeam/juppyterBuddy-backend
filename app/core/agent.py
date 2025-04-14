@@ -2,6 +2,7 @@
 import json
 import logging
 from typing import Dict, List, Any, Optional, Callable, TypedDict
+from app.services.rag import rag_store
 
 from langchain_core.messages import (
     SystemMessage,
@@ -112,23 +113,32 @@ class JupyterBuddyAgent:
         relevant_history = state["messages"]
 
         # Get a version of the LLM with tools bound to it
-        llm_with_tools = self.llm.bind_tools(self.tools, parallel_tool_calls=False) if self.tools else self.llm
+        llm_with_tools = (
+            self.llm.bind_tools(self.tools, parallel_tool_calls=False)
+            if self.tools
+            else self.llm
+        )
 
         # Call LLM
         response = await llm_with_tools.ainvoke(relevant_history)
-        
+
         # Extract tool calls from the response (wherever they might be)
         tool_calls = []
-        if hasattr(response, "additional_kwargs") and "tool_calls" in response.additional_kwargs:
+        if (
+            hasattr(response, "additional_kwargs")
+            and "tool_calls" in response.additional_kwargs
+        ):
             tool_calls = response.additional_kwargs["tool_calls"]
-        
+
         # Create minimal message with just content and tool calls
         minimal_llm_msg = AIMessage(
             content=response.content or "",
-            additional_kwargs={"tool_calls": tool_calls} if tool_calls else {}
+            additional_kwargs={"tool_calls": tool_calls} if tool_calls else {},
         )
-        
-        updated = update_state(state, llm_response=minimal_llm_msg, end_agent_execution=False)
+
+        updated = update_state(
+            state, llm_response=minimal_llm_msg, end_agent_execution=False
+        )
         logger.info(f"[LLM Node] Received response with {len(tool_calls)} tool calls")
         return updated
 
@@ -245,7 +255,6 @@ class JupyterBuddyAgent:
             waiting_for_tool_response=True,
             end_agent_execution=False,
         )
-
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
     ) -> AgentState:
@@ -260,6 +269,10 @@ class JupyterBuddyAgent:
             )
             return state
 
+        # Retrieve RAG context if available
+        rag_chunks = rag_store.retrieve(self.session_id, user_input)
+        rag_context = "\n\n".join(rag_chunks) if rag_chunks else "None"
+
         if state["first_message"]:
             from app.core.prompts import JUPYTERBUDDY_SYSTEM_PROMPT
 
@@ -269,10 +282,14 @@ class JupyterBuddyAgent:
                     conversation_history="None",
                     pending_actions="None",
                     error_state="None",
-                )
+                ) + f"\n\nContext documents:\n{rag_context}"
             )
             state["messages"].append(sys_msg)
             state["first_message"] = False
+        else:
+            # Inject context dynamically for every user query
+            context_msg = SystemMessage(content=f"Context documents:\n{rag_context}")
+            state["messages"].append(context_msg)
 
         # Runs only if the agent is not waiting for frontend
         state["messages"].append(HumanMessage(content=user_input))
@@ -291,7 +308,7 @@ class JupyterBuddyAgent:
         # Extract the result from results array
         results = result_data.get("results", [])
         logger.info(f"Tool result from frontend: {results}")
-        
+
         if not results:
             error_msg = "Tool execution returned no results. Check the frontend tool implementation."
             logger.error(error_msg)
@@ -302,12 +319,14 @@ class JupyterBuddyAgent:
         # Check for different types of errors
         tool_operation_failed = not result.get("success", True)
         cell_execution_failed = result.get("result", {}).get("status") == "error"
-        
+
         # Determine the appropriate message content
         if tool_operation_failed:
             content = result.get("error", "Unknown tool operation error")
         elif cell_execution_failed:
-            content = result.get("result", {}).get("error", "Unknown code execution error")
+            content = result.get("result", {}).get(
+                "error", "Unknown code execution error"
+            )
         else:
             content = json.dumps(result.get("result", {}))
 
@@ -315,7 +334,11 @@ class JupyterBuddyAgent:
             content=content,
             tool_call_id=current_action["tool_call_id"],
             name=current_action["tool_name"],
-            status="error" if (tool_operation_failed or cell_execution_failed) else "success"
+            status=(
+                "error"
+                if (tool_operation_failed or cell_execution_failed)
+                else "success"
+            ),
         )
 
         # Update state and continue execution

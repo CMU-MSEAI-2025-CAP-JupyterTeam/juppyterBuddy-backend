@@ -2,10 +2,15 @@
 import json
 import logging
 from typing import Dict, Any
+import base64
 
 from fastapi import WebSocket, WebSocketDisconnect
 from app.core.agent import JupyterBuddyAgent, AgentState
 from app.core.llm import get_llm
+
+from app.services.rag import rag_store
+from app.utils.parsers import extract_text_from_pdf  # we'll add this helper
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -101,11 +106,11 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
             "messages": [],
             "llm_response": None,
             "current_action": None,
-            "waiting_for_tool_response": False, 
+            "waiting_for_tool_response": False,
             "end_agent_execution": False,
             "first_message": True,
             "multiple_tool_call_requests": 0,
-             "session_id": session_id,
+            "session_id": session_id,
         }
 
         logger.info(
@@ -124,8 +129,8 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
         )
 
 
+# Update handle_user_message to support context files
 async def handle_user_message(session_id: str, data: Dict[str, Any]):
-    """Handle user message."""
     agent = agent_instances.get(session_id)
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")
@@ -134,8 +139,39 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     state = session_states.get(session_id)
     user_input = data.get("data")
     notebook_ctx = data.get("notebook_context")
+    context_files = data.get("context", [])  # Optional
 
-    # Process the message using the agent
+    try:
+        for file in context_files:
+            filename = file.get("filename", "unknown")
+            mime = file.get("type", "text/plain")
+            content = file.get("content", "")
+
+            if not content:
+                logger.warning(f"Empty context file skipped: {filename}")
+                continue
+
+            # Determine how to extract content based on MIME
+            # MIME stands for Multipurpose Internet Mail Extensions (file type)
+            if mime.startswith("text/"):
+                logger.info(f"[RAG] Ingesting plain text: {filename}")
+                rag_store.add_context(session_id, content)
+
+            elif mime == "application/pdf":
+                logger.info(f"[RAG] Ingesting PDF file: {filename}")
+                try:
+                    binary_data = base64.b64decode(content)
+                    extracted = extract_text_from_pdf(binary_data)
+                    rag_store.add_context(session_id, extracted)
+                except Exception as e:
+                    logger.warning(f"Failed to process PDF {filename}: {e}")
+            else:
+                logger.warning(f"Unsupported MIME type in context: {mime} ({filename})")
+
+    except Exception as e:
+        logger.exception(f"Error during RAG context processing: {e}")
+
+    # Continue with normal agent flow
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
 
