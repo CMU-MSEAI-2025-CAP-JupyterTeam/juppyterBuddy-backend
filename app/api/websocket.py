@@ -9,8 +9,12 @@ from app.core.agent import JupyterBuddyAgent, AgentState
 from app.core.llm import get_llm
 
 from app.services.rag import rag_store
+<<<<<<< HEAD
 from app.utils.parsers import extract_text_from_pdf  # we'll add this helper
 
+=======
+from app.utils.parsers import extract_text
+>>>>>>> a815a3f (hold backend)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -72,6 +76,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         session_states.pop(session_id, None)
 
 
+# Handle tool registration message
 async def handle_register_tools(session_id: str, data: Dict[str, Any]):
     """Handle tool registration message."""
     try:
@@ -135,13 +140,17 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")
         return
-
+    # Extract user input and context files
     state = session_states.get(session_id)
     user_input = data.get("data")
     notebook_ctx = data.get("notebook_context")
     context_files = data.get("context", [])  # Optional
 
+<<<<<<< HEAD
     try:
+=======
+    try:  # Process context files
+>>>>>>> a815a3f (hold backend)
         for file in context_files:
             filename = file.get("filename", "unknown")
             mime = file.get("type", "text/plain")
@@ -151,6 +160,7 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
                 logger.warning(f"Empty context file skipped: {filename}")
                 continue
 
+<<<<<<< HEAD
             # Determine how to extract content based on MIME
             # MIME stands for Multipurpose Internet Mail Extensions (file type)
             if mime.startswith("text/"):
@@ -168,6 +178,18 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
             else:
                 logger.warning(f"Unsupported MIME type in context: {mime} ({filename})")
 
+=======
+            extracted_text = extract_text(content, mime)
+
+            if extracted_text:
+                logger.info(f"[RAG] Ingested: {filename} (type: {mime})")
+                rag_store.add_context(session_id, extracted_text)
+            else:
+                logger.warning(
+                    f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})"
+                )
+    # Handle any exceptions during context processing
+>>>>>>> a815a3f (hold backend)
     except Exception as e:
         logger.exception(f"Error during RAG context processing: {e}")
 
@@ -175,7 +197,7 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
 
-
+# Handle action result from frontend
 async def handle_action_result(session_id: str, data: Dict[str, Any]):
     """Handle action result from frontend."""
     agent = agent_instances.get(session_id)
