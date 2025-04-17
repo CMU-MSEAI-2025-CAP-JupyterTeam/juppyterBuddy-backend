@@ -2,19 +2,13 @@
 import json
 import logging
 from typing import Dict, Any
-import base64
 
 from fastapi import WebSocket, WebSocketDisconnect
 from app.core.agent import JupyterBuddyAgent, AgentState
 from app.core.llm import get_llm
 
 from app.services.rag import rag_store
-<<<<<<< HEAD
-from app.utils.parsers import extract_text_from_pdf  # we'll add this helper
-
-=======
 from app.utils.parsers import extract_text
->>>>>>> a815a3f (hold backend)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -24,6 +18,9 @@ active_connections: Dict[str, WebSocket] = {}
 session_states: Dict[str, AgentState] = {}
 agent_instances: Dict[str, JupyterBuddyAgent] = {}
 
+
+# Internal tools
+from app.core.internalTools import retrieve_context
 
 # send_json function to send JSON messages to the WebSocket client
 async def send_json(session_id: str, message: Dict[str, Any]):
@@ -80,7 +77,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 async def handle_register_tools(session_id: str, data: Dict[str, Any]):
     """Handle tool registration message."""
     try:
-        tools = json.loads(data.get("data", "[]"))
+        
+        # Step 1: Load internal + frontend tools
+        internal_tools = [retrieve_context]
+        external_tools = json.loads(data.get("data", "[]"))
+        tools = external_tools + internal_tools
 
         # Initialize LLM
         llm = get_llm()
@@ -140,17 +141,14 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")
         return
+
     # Extract user input and context files
     state = session_states.get(session_id)
-    user_input = data.get("data")
+    user_input = data.get("data", "").strip()
     notebook_ctx = data.get("notebook_context")
     context_files = data.get("context", [])  # Optional
 
-<<<<<<< HEAD
     try:
-=======
-    try:  # Process context files
->>>>>>> a815a3f (hold backend)
         for file in context_files:
             filename = file.get("filename", "unknown")
             mime = file.get("type", "text/plain")
@@ -160,25 +158,6 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
                 logger.warning(f"Empty context file skipped: {filename}")
                 continue
 
-<<<<<<< HEAD
-            # Determine how to extract content based on MIME
-            # MIME stands for Multipurpose Internet Mail Extensions (file type)
-            if mime.startswith("text/"):
-                logger.info(f"[RAG] Ingesting plain text: {filename}")
-                rag_store.add_context(session_id, content)
-
-            elif mime == "application/pdf":
-                logger.info(f"[RAG] Ingesting PDF file: {filename}")
-                try:
-                    binary_data = base64.b64decode(content)
-                    extracted = extract_text_from_pdf(binary_data)
-                    rag_store.add_context(session_id, extracted)
-                except Exception as e:
-                    logger.warning(f"Failed to process PDF {filename}: {e}")
-            else:
-                logger.warning(f"Unsupported MIME type in context: {mime} ({filename})")
-
-=======
             extracted_text = extract_text(content, mime)
 
             if extracted_text:
@@ -188,12 +167,32 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
                 logger.warning(
                     f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})"
                 )
-    # Handle any exceptions during context processing
->>>>>>> a815a3f (hold backend)
     except Exception as e:
         logger.exception(f"Error during RAG context processing: {e}")
 
-    # Continue with normal agent flow
+    # 🧠 NEW: If message is empty but context was uploaded
+    if not user_input:
+        if context_files:
+            await send_json(
+                session_id,
+                {
+                    "message": "✅ Your context documents have been received and indexed. You can now ask a question using them.",
+                    "actions": None,
+                    "session_id": session_id,
+                },
+            )
+        else:
+            await send_json(
+                session_id,
+                {
+                    "message": "⚠️ No message received and no context provided. Please enter a message or upload a document.",
+                    "actions": None,
+                    "session_id": session_id,
+                },
+            )
+        return  # ⛔ Prevent sending an empty message to LLM
+
+    # 👇 Otherwise, continue with normal LLM execution
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
 
