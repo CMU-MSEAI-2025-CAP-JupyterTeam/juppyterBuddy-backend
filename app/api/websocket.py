@@ -148,6 +148,9 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
     notebook_ctx = data.get("notebook_context")
     context_files = data.get("context", [])  # Optional
 
+    successful_files = []
+    failed_files = []
+
     try:
         for file in context_files:
             filename = file.get("filename", "unknown")
@@ -155,42 +158,43 @@ async def handle_user_message(session_id: str, data: Dict[str, Any]):
             content = file.get("content", "")
 
             if not content:
-                logger.warning(f"Empty context file skipped: {filename}")
+                logger.warning(f"[RAG] Skipped empty file: {filename}")
+                failed_files.append(filename)
                 continue
 
             extracted_text = extract_text(content, mime)
+            logger.info(f"[RAG] Extracted text from {filename}: {extracted_text[:100]}...")
 
             if extracted_text:
                 logger.info(f"[RAG] Ingested: {filename} (type: {mime})")
                 rag_store.add_context(session_id, extracted_text)
+                successful_files.append(filename)
             else:
-                logger.warning(
-                    f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})"
-                )
+                logger.warning(f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})")
+                failed_files.append(filename)
     except Exception as e:
         logger.exception(f"Error during RAG context processing: {e}")
 
-    # 🧠 NEW: If message is empty but context was uploaded
+    # NEW: If message is empty but context was uploaded
     if not user_input:
-        if context_files:
-            await send_json(
-                session_id,
-                {
-                    "message": "✅ Your context documents have been received and indexed. You can now ask a question using them.",
-                    "actions": None,
-                    "session_id": session_id,
-                },
-            )
+        if successful_files:
+            success_msg = f"✅ Indexed {len(successful_files)} document(s): {', '.join(successful_files)}."
+            if failed_files:
+                success_msg += f" ⚠️ Skipped {len(failed_files)} unsupported or unreadable file(s): {', '.join(failed_files)}."
+        elif failed_files:
+            success_msg = f"⚠️ All {len(failed_files)} uploaded file(s) failed to process: {', '.join(failed_files)}."
         else:
-            await send_json(
-                session_id,
-                {
-                    "message": "⚠️ No message received and no context provided. Please enter a message or upload a document.",
-                    "actions": None,
-                    "session_id": session_id,
-                },
-            )
-        return  # ⛔ Prevent sending an empty message to LLM
+            success_msg = "⚠️ No message received and no context provided. Please enter a message or upload a document."
+
+        await send_json(
+            session_id,
+            {
+                "message": success_msg,
+                "actions": None,
+                "session_id": session_id,
+            },
+        )
+        return
 
     # 👇 Otherwise, continue with normal LLM execution
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)

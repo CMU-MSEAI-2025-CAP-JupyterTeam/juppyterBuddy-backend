@@ -17,14 +17,10 @@ def extract_text(content: str, mime: str) -> Optional[str]:
         Optional[str]: Extracted plain text, or None if unsupported or failed.
     """
     try:
-        if mime.startswith("text/"):
-            # Already plain text, decode if it's base64
-            try:
-                decoded_content = base64.b64decode(content).decode('utf-8')
-                return decoded_content
-            except (base64.binascii.Error, UnicodeDecodeError):
-                return content  # Return as is if it's not base64 encoded
-                
+        if mime.startswith("text/") or mime == "application/octet-stream":
+            print(f"[RAG] Skipping decode for {mime} (assuming plain text)")
+            return content
+        
         elif mime == "application/pdf":
             binary_data = base64.b64decode(content)
             with fitz.open(stream=io.BytesIO(binary_data), filetype="pdf") as doc:
