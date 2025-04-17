@@ -350,24 +350,3 @@ class JupyterBuddyAgent:
         )
 
         return await self.graph.ainvoke(updated_state)
-
-    def _filter_tool_call_mismatch(
-        self, messages: List[BaseMessage]
-    ) -> List[BaseMessage]:
-        """Avoid sending LLM assistant messages with unresponded tool_calls."""
-        if not messages:
-            return []
-
-        last = messages[-1]
-        if isinstance(last, AIMessage):
-            tool_calls = getattr(last, "additional_kwargs", {}).get("tool_calls", [])
-            for tc in tool_calls:
-                if not any(
-                    isinstance(m, ToolMessage) and m.tool_call_id == tc["id"]
-                    for m in messages
-                ):
-                    logger.warning(
-                        "Filtered out assistant message with unresolved tool calls"
-                    )
-                    return messages[:-1]  # drop last assistant message
-        return messages
