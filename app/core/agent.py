@@ -213,49 +213,71 @@ class JupyterBuddyAgent:
                 )
 
     async def _tool_node(self, state: AgentState) -> AgentState:
-        # By this point, we are guaranteed:
-        # - `state["messages"]` contains a valid assistant message
-        # - That assistant message has exactly one tool call
-        # - It was already validated and appended in the previous step
-
-        # Get the assistant message with the tool call (always the last one)
         assistant_msg = state["messages"][-1]
-
-        # 🔍 Extract the single tool call (guaranteed to exist and be valid)
         tool_calls = getattr(assistant_msg, "tool_calls", None)
+
         if not tool_calls or len(tool_calls) != 1:
             raise ValueError("Expected exactly one tool call from the assistant.")
-        tool_call = tool_calls[0]
 
-        # Extract tool call details
+        tool_call = tool_calls[0]
         tool_name = tool_call["name"]
         tool_call_id = tool_call["id"]
-        args = tool_call["args"]  # already parsed
+        args = tool_call["args"]
 
-        # 🛠️ Build the structured tool action to send to the frontend
+        # 🧠 Special case: backend-only internal tool
+        if tool_name == "retrieve_context":
+            from app.core.internalTools import retrieve_context
+
+            try:
+                result = retrieve_context.invoke(args)  # Call sync tool directly
+                logger.info(f"[Internal Tool] Executed {tool_name}, result: {result}")
+                result_payload = {
+                    "results": [
+                        {
+                            "action_type": tool_name,
+                            "tool_call_id": tool_call_id,
+                            "result": result,
+                            "success": True,
+                        }
+                    ]
+                }
+            except Exception as e:
+                logger.exception(f"[Internal Tool Error] {tool_name}")
+                result_payload = {
+                    "results": [
+                        {
+                            "action_type": tool_name,
+                            "tool_call_id": tool_call_id,
+                            "success": False,
+                            "error": str(e),
+                        }
+                    ]
+                }
+
+            return await self.handle_tool_result(state, result_payload)
+
+        # 🛠 Default: external tool, handled by frontend
         action = {
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
             "parameters": args,
         }
 
-        # Send the action to the frontend (via WebSocket or whatever your implementation uses)
         await self.send_action(
             {
-                "message": assistant_msg.content,  # Optional assistant message context
-                "actions": [action],  # Always a list with one tool
+                "message": assistant_msg.content,
+                "actions": [action],
                 "session_id": self.session_id,
             }
         )
 
-        # Update state:
         return update_state(
             state,
             current_action=action,
             waiting_for_tool_response=True,
             end_agent_execution=False,
         )
-        
+
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
     ) -> AgentState:
