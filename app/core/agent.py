@@ -255,6 +255,7 @@ class JupyterBuddyAgent:
             waiting_for_tool_response=True,
             end_agent_execution=False,
         )
+        
     async def handle_user_message(
         self, state: AgentState, user_input: str, notebook_context: Optional[Dict]
     ) -> AgentState:
@@ -269,10 +270,6 @@ class JupyterBuddyAgent:
             )
             return state
 
-        # Retrieve RAG context if available
-        rag_chunks = rag_store.retrieve(self.session_id, user_input)
-        rag_context = "\n\n".join(rag_chunks) if rag_chunks else "None"
-
         if state["first_message"]:
             from app.core.prompts import JUPYTERBUDDY_SYSTEM_PROMPT
 
@@ -282,14 +279,10 @@ class JupyterBuddyAgent:
                     conversation_history="None",
                     pending_actions="None",
                     error_state="None",
-                ) + f"\n\nContext documents:\n{rag_context}"
+                )
             )
             state["messages"].append(sys_msg)
             state["first_message"] = False
-        else:
-            # Inject context dynamically for every user query
-            context_msg = SystemMessage(content=f"Context documents:\n{rag_context}")
-            state["messages"].append(context_msg)
 
         # Runs only if the agent is not waiting for frontend
         state["messages"].append(HumanMessage(content=user_input))
