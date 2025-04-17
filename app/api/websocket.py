@@ -49,7 +49,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if msg_type == "register_tools":
                 await handle_register_tools(session_id, data)
             elif msg_type == "user_message":
-                await handle_user_message(session_id, data)
+                await socket_handle_user_message(session_id, data)
             elif msg_type == "action_result":
                 await handle_action_result(session_id, data)
             else:
@@ -135,8 +135,8 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
         )
 
 
-# Update handle_user_message to support context files
-async def handle_user_message(session_id: str, data: Dict[str, Any]):
+# Update socket_handle_user_message to support context files
+async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
     agent = agent_instances.get(session_id)
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")

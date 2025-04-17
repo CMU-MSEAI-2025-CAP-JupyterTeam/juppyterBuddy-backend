@@ -229,7 +229,7 @@ class JupyterBuddyAgent:
             from app.core.internalTools import retrieve_context
 
             try:
-                result = retrieve_context.invoke(args)  # Call sync tool directly
+                result = retrieve_context.invoke(args)
                 logger.info(f"[Internal Tool] Executed {tool_name}, result: {result}")
                 result_payload = {
                     "results": [
@@ -254,9 +254,20 @@ class JupyterBuddyAgent:
                     ]
                 }
 
+            # ✅ Fix: update state with current_action before continuing
+            state = update_state(
+                state,
+                current_action={
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "parameters": args,
+                },
+                waiting_for_tool_response=True,
+            )
+
             return await self.handle_tool_result(state, result_payload)
 
-        # 🛠 Default: external tool, handled by frontend
+        # 🛠️ Default: frontend tool (external)
         action = {
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
@@ -313,7 +324,7 @@ class JupyterBuddyAgent:
     async def handle_tool_result(
         self, state: AgentState, result_data: Dict[str, Any]
     ) -> AgentState:
-        """Receive result from frontend tool execution."""
+        """Receive result from frontend or backend tool execution."""
         current_action = state.get("current_action")
 
         if not current_action:
@@ -322,37 +333,43 @@ class JupyterBuddyAgent:
 
         # Extract the result from results array
         results = result_data.get("results", [])
-        logger.info(f"Tool result from frontend: {results}")
+        logger.info(f"Tool result received: {results}")
 
         if not results:
-            error_msg = "Tool execution returned no results. Check the frontend tool implementation."
+            error_msg = (
+                "Tool execution returned no results. Check the tool implementation."
+            )
             logger.error(error_msg)
             result = {"success": False, "error": error_msg}
         else:
             result = results[0]
 
-        # Check for different types of errors
+        # Determine result type
         tool_operation_failed = not result.get("success", True)
-        cell_execution_failed = result.get("result", {}).get("status") == "error"
 
-        # Determine the appropriate message content
+        # Patch: if result["result"] is a string, don't assume it's a dict
+        raw_result = result.get("result", "")
+        is_dict = isinstance(raw_result, dict)
+        cell_execution_failed = (
+            raw_result.get("status") == "error" if is_dict else False
+        )
+
+        # Determine appropriate message content
         if tool_operation_failed:
             content = result.get("error", "Unknown tool operation error")
         elif cell_execution_failed:
-            content = result.get("result", {}).get(
-                "error", "Unknown code execution error"
-            )
+            content = raw_result.get("error", "Unknown code execution error")
         else:
-            content = json.dumps(result.get("result", {}))
+            # Serialize only if it's a dict, otherwise pass the string directly
+            content = json.dumps(raw_result) if is_dict else str(raw_result)
 
+        # Create a tool message from the result
         tool_message = ToolMessage(
             content=content,
             tool_call_id=current_action["tool_call_id"],
             name=current_action["tool_name"],
             status=(
-                "error"
-                if (tool_operation_failed or cell_execution_failed)
-                else "success"
+                "error" if tool_operation_failed or cell_execution_failed else "success"
             ),
         )
 
