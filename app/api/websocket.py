@@ -141,13 +141,12 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")
         return
-
+    
     # Extract user input and context files
     state = session_states.get(session_id)
     user_input = data.get("data", "").strip()
     notebook_ctx = data.get("notebook_context")
     context_files = data.get("context", [])  # Optional
-
     successful_files = []
     failed_files = []
 
@@ -156,7 +155,6 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
             filename = file.get("filename", "unknown")
             mime = file.get("type", "text/plain")
             content = file.get("content", "")
-
             if not content:
                 logger.warning(f"[RAG] Skipped empty file: {filename}")
                 failed_files.append(filename)
@@ -167,6 +165,8 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
 
             if extracted_text:
                 logger.info(f"[RAG] Ingested: {filename} (type: {mime})")
+                # print session_id, extracted_text
+                logger.info(f"[RAG] Adding context for session {session_id}")
                 rag_store.add_context(session_id, extracted_text)
                 successful_files.append(filename)
             else:
