@@ -229,8 +229,15 @@ class JupyterBuddyAgent:
             from app.core.internalTools import retrieve_context
 
             try:
-                result = retrieve_context.invoke(args)
-                logger.info(f"I ternal tol args: {args}")
+                # ✅ Extract structured arguments
+                query = args.get("query")
+                session_id = state["session_id"]
+
+                # ✅ Directly invoke with structured params
+                result = retrieve_context.invoke(
+                    {"query": query, "session_id": session_id}
+                )
+
                 logger.info(f"[Internal Tool] Executed {tool_name}, result: {result}")
                 result_payload = {
                     "results": [
@@ -255,13 +262,13 @@ class JupyterBuddyAgent:
                     ]
                 }
 
-            # ✅ Fix: update state with current_action before continuing
+            # ✅ Patch state BEFORE handle_tool_result
             state = update_state(
                 state,
                 current_action={
                     "tool_name": tool_name,
                     "tool_call_id": tool_call_id,
-                    "parameters": args,
+                    "parameters": {"query": query},
                 },
                 waiting_for_tool_response=True,
             )
