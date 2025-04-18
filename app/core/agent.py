@@ -230,6 +230,7 @@ class JupyterBuddyAgent:
 
             try:
                 result = retrieve_context.invoke(args)
+                logger.info(f"I ternal tol args: {args}")
                 logger.info(f"[Internal Tool] Executed {tool_name}, result: {result}")
                 result_payload = {
                     "results": [
