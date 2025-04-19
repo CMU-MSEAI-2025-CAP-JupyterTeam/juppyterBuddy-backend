@@ -167,7 +167,9 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
                 logger.info(f"[RAG] Ingested: {filename} (type: {mime})")
                 # print session_id, extracted_text
                 logger.info(f"[RAG] Adding context for session {session_id}")
-                rag_store.add_context(session_id, extracted_text)
+                # ✅ Updated line inside socket_handle_user_message
+                rag_store.add_context(session_id, extracted_text, filename=filename)
+
                 successful_files.append(filename)
             else:
                 logger.warning(f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})")
