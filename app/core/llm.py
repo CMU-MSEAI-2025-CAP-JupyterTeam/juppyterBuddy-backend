@@ -1,3 +1,5 @@
+# app/core/llm.py
+
 """
 JupyterBuddy LLM Integration Module
 
