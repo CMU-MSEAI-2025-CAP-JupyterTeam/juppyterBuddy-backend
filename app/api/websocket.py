@@ -180,7 +180,7 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
     # NEW: If message is empty but context was uploaded
     if not user_input:
         if successful_files:
-            success_msg = f"✅ Indexed {len(successful_files)} document(s): {', '.join(successful_files)}."
+            success_msg = f"📜 Saved {len(successful_files)} Instruction file(s): {', '.join(successful_files)}."
             if failed_files:
                 success_msg += f" ⚠️ Skipped {len(failed_files)} unsupported or unreadable file(s): {', '.join(failed_files)}."
         elif failed_files:

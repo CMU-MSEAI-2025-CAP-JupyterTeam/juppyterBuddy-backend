@@ -120,6 +120,7 @@ class JupyterBuddyAgent:
         )
 
         # Call LLM
+        # logger.info(f"[LLM Node] INPUT:  {relevant_history}")
         response = await llm_with_tools.ainvoke(relevant_history)
 
         # Extract tool calls from the response (wherever they might be)
