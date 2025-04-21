@@ -22,6 +22,7 @@ agent_instances: Dict[str, JupyterBuddyAgent] = {}
 # Internal tools
 from app.core.internalTools import retrieve_context
 
+
 # send_json function to send JSON messages to the WebSocket client
 async def send_json(session_id: str, message: Dict[str, Any]):
     """Send JSON message to WebSocket client."""
@@ -77,7 +78,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 async def handle_register_tools(session_id: str, data: Dict[str, Any]):
     """Handle tool registration message."""
     try:
-        
+
         # Step 1: Load internal + frontend tools
         internal_tools = [retrieve_context]
         external_tools = json.loads(data.get("data", "[]"))
@@ -136,15 +137,17 @@ async def handle_register_tools(session_id: str, data: Dict[str, Any]):
 
 
 # Update socket_handle_user_message to support context files
+# Update socket_handle_user_message to support context files
 async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
     agent = agent_instances.get(session_id)
     if not agent:
         logger.warning(f"Agent not ready for session {session_id}")
         return
-    
+
     # Extract user input and context files
     state = session_states.get(session_id)
-    user_input = data.get("data", "").strip()
+    base_input = data.get("data", "").strip()
+    user_input = base_input  # Will be updated if context is added
     notebook_ctx = data.get("notebook_context")
     context_files = data.get("context", [])  # Optional
     successful_files = []
@@ -161,46 +164,58 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
                 continue
 
             extracted_text = extract_text(content, mime)
-            logger.info(f"[RAG] Extracted text from {filename}: {extracted_text[:100]}...")
+            logger.info(
+                f"[RAG] Extracted text from {filename}: {extracted_text[:100]}..."
+            )
 
             if extracted_text:
                 logger.info(f"[RAG] Ingested: {filename} (type: {mime})")
-                # print session_id, extracted_text
                 logger.info(f"[RAG] Adding context for session {session_id}")
-                # ✅ Updated line inside socket_handle_user_message
                 rag_store.add_context(session_id, extracted_text, filename=filename)
-
                 successful_files.append(filename)
             else:
-                logger.warning(f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})")
+                logger.warning(
+                    f"[RAG] Skipped unsupported or unreadable file: {filename} ({mime})"
+                )
                 failed_files.append(filename)
     except Exception as e:
         logger.exception(f"Error during RAG context processing: {e}")
 
-    # NEW: If message is empty but context was uploaded
-    if not user_input:
-        if successful_files:
-            success_msg = f"📜 Saved {len(successful_files)} Instruction file(s): {', '.join(successful_files)}."
-            if failed_files:
-                success_msg += f" ⚠️ Skipped {len(failed_files)} unsupported or unreadable file(s): {', '.join(failed_files)}."
-        elif failed_files:
-            success_msg = f"⚠️ All {len(failed_files)} uploaded file(s) failed to process: {', '.join(failed_files)}."
+    # If context was uploaded, append a note to the message
+    if successful_files:
+        # Add summary for LLM to see
+        brief_summary = rag_store.get_brief_summary(session_id)
+        
+        user_input = f"""{user_input.strip()}
+
+    [Note: {len(successful_files)} instruction file(s) were uploaded: {', '.join(successful_files)}.
+    Treat them as authoritative. Here’s a quick preview:]
+    {brief_summary}
+    """
+
+    # Only send summary and stop if message is empty and no context was successfully uploaded
+    if not base_input and not successful_files:
+        if failed_files:
+            summary_msg = f"⚠️ All {len(failed_files)} uploaded file(s) failed to process: {', '.join(failed_files)}."
         else:
-            success_msg = "⚠️ No message received and no context provided. Please enter a message or upload a document."
+            summary_msg = "⚠️ No message received and no context provided. Please enter a message or upload a document."
 
         await send_json(
             session_id,
             {
-                "message": success_msg,
+                "message": summary_msg,
                 "actions": None,
                 "session_id": session_id,
             },
         )
         return
 
-    # 👇 Otherwise, continue with normal LLM execution
+    # Continue with normal LLM execution
+    #loger user input
+    logger.info(f"[RAG] User input: {user_input}")
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
+
 
 # Handle action result from frontend
 async def handle_action_result(session_id: str, data: Dict[str, Any]):
