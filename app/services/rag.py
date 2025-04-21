@@ -91,7 +91,30 @@ class RAGStore:
             chunks.append(current.strip())
 
         return chunks
+    
+    def get_brief_summary(self, session_id: str, max_lines: int = 3) -> str:
+        """
+        Returns a short, readable summary of the most recently uploaded document for session.
+        This is *not* a true semantic summary — just a token-efficient preview.
 
+        Args:
+            session_id (str): Session identifier
+            max_lines (int): Max number of lines to include in the summary
+
+        Returns:
+            str: Short summary with filename reference
+        """
+        chunks = self.session_chunks.get(session_id)
+        if not chunks:
+            return ""
+
+        # Grab the first chunk (most representative intro)
+        first_chunk = chunks[0]["text"]
+        lines = first_chunk.strip().splitlines()
+        snippet = "\n".join(lines[:max_lines])
+
+        source = chunks[0]["source"]
+        return f"[Summary from {source}]\n{snippet}"
 
 # Singleton instance
 rag_store = RAGStore()
