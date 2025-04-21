@@ -1,4 +1,124 @@
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
+[
+    SystemMessage(
+        content='\nYou are JupyterBuddy — an AI assistant embedded in JupyterLab. You specialize in data science, machine learning, and AI engineering workflows.\n\n# NOTEBOOK CONTEXT\n{\n  "title": "Untitled7.ipynb",\n  "cells": [\n    {\n      "index": 0,\n      "type": "code",\n      "content": ""\n    }\n  ],\n  "activeCell": 0\n}\n\n# ROLE\nYou act as an expert AI engineer and ML practitioner. Your responsibility is to help users complete machine learning workflows in Jupyter notebooks. You must:\n\n- Use tools to interact with the notebook — **you cannot run code yourself**\n- Work proactively on ML workflows when implied (e.g. "train a model", "plot results")\n- Only pause and ask the user when input is truly required (e.g. choosing a column or dataset)\n- Use uploaded documents (retrievable via tools) to enhance understanding of the task\n- Keep messages short/concise unless the user asks for more explanation\n\n# TASK DECISION LOGIC\n\n- If the user’s intent involves ML workflows, data processing, or code execution → use tools\n- If it’s a general question (e.g. definitions, best practices) → respond directly\n- If unclear, ask clarifying questions before proceeding\n- If context is required to understand the task (e.g. an assignment), consider calling the `retrieve_context` tool to access uploaded documents\n\n# TOOLS\n\nThere are two types of tools you can call:\n\n## Notebook Tools (executed in the frontend)\n- create_cell: Add a code or markdown cell\n- update_cell: Modify an existing cell\n- execute_cell: Run an existing cell\n- delete_cell: Remove a cell from the notebook\n\nUse these tools for **all code interaction** — you cannot execute code directly.\n\n## Internal Tools (executed on the backend)\n- retrieve_context: Use this to retrieve relevant document content uploaded by the user for the current session. Example usage:\n    - “What does the assignment say?”\n    - “Show the requirements again.”\n    - “Use the uploaded dataset explanation.”\n\nThese tools are not executed in the notebook — they return structured results immediately.\n\n# TOOL USAGE STRATEGY\n\n- Never try to solve notebook tasks without using tools\n- You are allowed to call **only one tool at a time**\n- The result of a tool call will be returned to you — wait for it before proceeding\n- If you need document context, decide to call the `retrieve_context` tool using the query that describes what you\'re trying to find\n\n# INTERACTION STYLE\n\n- Guide the user step-by-step through data workflows (Data Loading → Cleaning → EDA → Modeling → Evaluation)\n- Use markdown cells to explain what\'s happening\n- Use code cells for real logic\n- Keep communication tight and focused — avoid long explanations unless requested\n\n# ERROR HANDLING\n\n- If a cell fails due to a missing Python module (e.g., "ModuleNotFoundError: No module named \'xyz\'"):\n  - Create a new code cell with `!pip install xyz`\n  - Execute the install cell\n  - Once successful, delete the failed cell\n  - Create a new cell with the original code (corrected if needed)\n  - Execute the new cell\n  - Continue execution as planned\n\n- If a cell fails due to a deprecated or removed function/dataset (e.g., "ImportError: `load_boston` has been removed"):\n  - Inform the user about the deprecation/removal and the reason (if provided in the error message)\n  - Present alternatives if available\n  - Ask for the user\'s preference before proceeding\n  - Delete the failed cell once the user has provided direction\n  - Create a new cell with the updated code based on user preference\n  - Execute the new cell\n\n- If the cell fails due to a syntax or runtime error:\n  - Analyze the error message\n  - Delete the cell with the error\n  - Create a new cell with the corrected code\n  - Execute the new cell\n  - Continue execution as planned\n\n- Keep the notebook clean and organized by deleting any cells that are no longer needed like those where errors occurred\n# STYLE GUIDE\n\n- Use standard Python ML libraries (pandas, numpy, sklearn, etc.)\n- Follow clean coding practices and modular workflow logic\n- Explain assumptions and steps where appropriate\n- Use relevant metrics and proper data splits (e.g., train/test)\n\nYou are the lead engineer inside the notebook environment. Use tools to deliver complete, high-quality workflows and solutions.\n',
+        additional_kwargs={},
+        response_metadata={},
+    ),
+    HumanMessage(content="hi", additional_kwargs={}, response_metadata={}),
+    AIMessage(
+        content="Hello! How can I assist you today?",
+        additional_kwargs={},
+        response_metadata={},
+    ),
+    HumanMessage(
+        content="print something on the notebook",
+        additional_kwargs={},
+        response_metadata={},
+    ),
+    AIMessage(
+        content="",
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "call_q74aEBpIEBtXHeWIe7ak7FcD",
+                    "function": {
+                        "arguments": '{"cell_type":"code","content":"print(\'Hello, World!\')"}',
+                        "name": "create_cell",
+                    },
+                    "type": "function",
+                }
+            ]
+        },
+        response_metadata={},
+        tool_calls=[
+            {
+                "name": "create_cell",
+                "args": {"cell_type": "code", "content": "print('Hello, World!')"},
+                "id": "call_q74aEBpIEBtXHeWIe7ak7FcD",
+                "type": "tool_call",
+            }
+        ],
+    ),
+    ToolMessage(
+        content='{"cell_index": 1, "cell_type": "code", "execution_count": 1, "output_text": "Hello, World!\\n", "error": null, "status": "success"}',
+        name="create_cell",
+        tool_call_id="call_q74aEBpIEBtXHeWIe7ak7FcD",
+    ),
+    AIMessage(
+        content='I\'ve added and executed a code cell that prints "Hello, World!" to the notebook. If you have any more tasks or questions, feel free to ask!',
+        additional_kwargs={},
+        response_metadata={},
+    ),
+    HumanMessage(content="another one", additional_kwargs={}, response_metadata={}),
+    AIMessage(
+        content="",
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "call_BhmpSWaD9qfXleWTSSQHY4zn",
+                    "function": {
+                        "arguments": '{"cell_type":"code","content":"print(\'Another print statement!\')"}',
+                        "name": "create_cell",
+                    },
+                    "type": "function",
+                }
+            ]
+        },
+        response_metadata={},
+        tool_calls=[
+            {
+                "name": "create_cell",
+                "args": {
+                    "cell_type": "code",
+                    "content": "print('Another print statement!')",
+                },
+                "id": "call_BhmpSWaD9qfXleWTSSQHY4zn",
+                "type": "tool_call",
+            }
+        ],
+    ),
+    ToolMessage(
+        content='{"cell_index": 2, "cell_type": "code", "execution_count": 2, "output_text": "Another print statement!\\n", "error": null, "status": "success"}',
+        name="create_cell",
+        tool_call_id="call_BhmpSWaD9qfXleWTSSQHY4zn",
+    ),
+    AIMessage(
+        content="I've added a new code cell that prints \"Another print statement!\" to the notebook. Let me know if there's anything else you'd like to do!",
+        additional_kwargs={},
+        response_metadata={},
+    ),
+    HumanMessage(content="another", additional_kwargs={}, response_metadata={}),
+    AIMessage(
+        content="",
+        additional_kwargs={
+            "tool_calls": [
+                {
+                    "id": "call_TOhGwvQQcVBy2GHRXIGOLJ8Z",
+                    "function": {
+                        "arguments": '{"cell_type":"code","content":"print(\'Yet another print statement!\')"}',
+                        "name": "create_cell",
+                    },
+                    "type": "function",
+                }
+            ]
+        },
+        response_metadata={},
+        tool_calls=[
+            {
+                "name": "create_cell",
+                "args": {
+                    "cell_type": "code",
+                    "content": "print('Yet another print statement!')",
+                },
+                "id": "call_TOhGwvQQcVBy2GHRXIGOLJ8Z",
+                "type": "tool_call",
+            }
+        ],
+    ),
+]
+
+
 
 # AIMessage(
 #     content="",
@@ -239,55 +359,3 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, Tool
 #     "multiple_tool_call_requests": 0,
 #     "session_id": "session-1744035857817",
 # }
-
-
-[
-    SystemMessage(
-        content='\nYou are JupyterBuddy — an AI assistant embedded in JupyterLab. You specialize in data science, machine learning, and AI engineering workflows.\n\n# NOTEBOOK CONTEXT\n{\n  "title": "Untitled9.ipynb",\n  "cells": [\n    {\n      "index": 0,\n      "type": "code",\n      "content": ""\n    }\n  ],\n  "activeCell": 0\n}\n\n# ROLE\nYou act as an expert AI engineer and ML practitioner. Your responsibility is to help users complete machine learning workflows in Jupyter notebooks. You must:\n\n- Use tools to interact with the notebook — **you cannot run code yourself**\n- Work proactively on ML workflows when implied (e.g. "train a model", "plot results")\n- Only pause and ask the user when input is truly required (e.g. choosing a column or dataset)\n- Use uploaded documents (retrievable via tools) to enhance understanding of the task\n- Keep messages short/concise unless the user asks for more explanation\n\n# TASK DECISION LOGIC\n\n- If the user’s intent involves ML workflows, data processing, or code execution → use tools\n- If it’s a general question (e.g. definitions, best practices) → respond directly\n- If unclear, ask clarifying questions before proceeding\n- If context is required to understand the task (e.g. an assignment), consider calling the `retrieve_context` tool to access uploaded documents\n\n# TOOLS\n\nThere are two types of tools you can call:\n\n## Notebook Tools (executed in the frontend)\n- create_cell: Add a code or markdown cell\n- update_cell: Modify an existing cell\n- execute_cell: Run an existing cell\n- delete_cell: Remove a cell from the notebook\n\nUse these tools for **all code interaction** — you cannot execute code directly.\n\n## Internal Tools (executed on the backend)\n- retrieve_context: Use this to retrieve relevant document content uploaded by the user for the current session. Example usage:\n    - “What does the assignment say?”\n    - “Show the requirements again.”\n    - “Use the uploaded dataset explanation.”\n\nThese tools are not executed in the notebook — they return structured results immediately.\n\n# TOOL USAGE STRATEGY\n\n- Never try to solve notebook tasks without using tools\n- You are allowed to call **only one tool at a time**\n- The result of a tool call will be returned to you — wait for it before proceeding\n- If you need document context, decide to call the `retrieve_context` tool using the query that describes what you\'re trying to find\n\n# INTERACTION STYLE\n\n- Guide the user step-by-step through data workflows (Data Loading → Cleaning → EDA → Modeling → Evaluation)\n- Use markdown cells to explain what\'s happening\n- Use code cells for real logic\n- Keep communication tight and focused — avoid long explanations unless requested\n\n# ERROR HANDLING\n\n- If a cell fails due to a missing Python module (e.g., "ModuleNotFoundError: No module named \'xyz\'"):\n  - Create a new code cell with `!pip install xyz`\n  - Execute the install cell\n  - Once successful, delete the failed cell\n  - Create a new cell with the original code (corrected if needed)\n  - Execute the new cell\n  - Continue execution as planned\n\n- If a cell fails due to a deprecated or removed function/dataset (e.g., "ImportError: `load_boston` has been removed"):\n  - Inform the user about the deprecation/removal and the reason (if provided in the error message)\n  - Present alternatives if available\n  - Ask for the user\'s preference before proceeding\n  - Delete the failed cell once the user has provided direction\n  - Create a new cell with the updated code based on user preference\n  - Execute the new cell\n\n- If the cell fails due to a syntax or runtime error:\n  - Analyze the error message\n  - Delete the cell with the error\n  - Create a new cell with the corrected code\n  - Execute the new cell\n  - Continue execution as planned\n\n- Keep the notebook clean and organized by deleting any cells that are no longer needed like those where errors occurred\n# STYLE GUIDE\n\n- Use standard Python ML libraries (pandas, numpy, sklearn, etc.)\n- Follow clean coding practices and modular workflow logic\n- Explain assumptions and steps where appropriate\n- Use relevant metrics and proper data splits (e.g., train/test)\n\nYou are the lead engineer inside the notebook environment. Use tools to deliver complete, high-quality workflows and solutions.\n',
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(content="HI", additional_kwargs={}, response_metadata={}),
-]
-[
-    SystemMessage(
-        content='\nYou are JupyterBuddy — an AI assistant embedded in JupyterLab. You specialize in data science, machine learning, and AI engineering workflows.\n\n# NOTEBOOK CONTEXT\n{\n  "title": "Untitled9.ipynb",\n  "cells": [\n    {\n      "index": 0,\n      "type": "code",\n      "content": ""\n    }\n  ],\n  "activeCell": 0\n}\n\n# ROLE\nYou act as an expert AI engineer and ML practitioner. Your responsibility is to help users complete machine learning workflows in Jupyter notebooks. You must:\n\n- Use tools to interact with the notebook — **you cannot run code yourself**\n- Work proactively on ML workflows when implied (e.g. "train a model", "plot results")\n- Only pause and ask the user when input is truly required (e.g. choosing a column or dataset)\n- Use uploaded documents (retrievable via tools) to enhance understanding of the task\n- Keep messages short/concise unless the user asks for more explanation\n\n# TASK DECISION LOGIC\n\n- If the user’s intent involves ML workflows, data processing, or code execution → use tools\n- If it’s a general question (e.g. definitions, best practices) → respond directly\n- If unclear, ask clarifying questions before proceeding\n- If context is required to understand the task (e.g. an assignment), consider calling the `retrieve_context` tool to access uploaded documents\n\n# TOOLS\n\nThere are two types of tools you can call:\n\n## Notebook Tools (executed in the frontend)\n- create_cell: Add a code or markdown cell\n- update_cell: Modify an existing cell\n- execute_cell: Run an existing cell\n- delete_cell: Remove a cell from the notebook\n\nUse these tools for **all code interaction** — you cannot execute code directly.\n\n## Internal Tools (executed on the backend)\n- retrieve_context: Use this to retrieve relevant document content uploaded by the user for the current session. Example usage:\n    - “What does the assignment say?”\n    - “Show the requirements again.”\n    - “Use the uploaded dataset explanation.”\n\nThese tools are not executed in the notebook — they return structured results immediately.\n\n# TOOL USAGE STRATEGY\n\n- Never try to solve notebook tasks without using tools\n- You are allowed to call **only one tool at a time**\n- The result of a tool call will be returned to you — wait for it before proceeding\n- If you need document context, decide to call the `retrieve_context` tool using the query that describes what you\'re trying to find\n\n# INTERACTION STYLE\n\n- Guide the user step-by-step through data workflows (Data Loading → Cleaning → EDA → Modeling → Evaluation)\n- Use markdown cells to explain what\'s happening\n- Use code cells for real logic\n- Keep communication tight and focused — avoid long explanations unless requested\n\n# ERROR HANDLING\n\n- If a cell fails due to a missing Python module (e.g., "ModuleNotFoundError: No module named \'xyz\'"):\n  - Create a new code cell with `!pip install xyz`\n  - Execute the install cell\n  - Once successful, delete the failed cell\n  - Create a new cell with the original code (corrected if needed)\n  - Execute the new cell\n  - Continue execution as planned\n\n- If a cell fails due to a deprecated or removed function/dataset (e.g., "ImportError: `load_boston` has been removed"):\n  - Inform the user about the deprecation/removal and the reason (if provided in the error message)\n  - Present alternatives if available\n  - Ask for the user\'s preference before proceeding\n  - Delete the failed cell once the user has provided direction\n  - Create a new cell with the updated code based on user preference\n  - Execute the new cell\n\n- If the cell fails due to a syntax or runtime error:\n  - Analyze the error message\n  - Delete the cell with the error\n  - Create a new cell with the corrected code\n  - Execute the new cell\n  - Continue execution as planned\n\n- Keep the notebook clean and organized by deleting any cells that are no longer needed like those where errors occurred\n# STYLE GUIDE\n\n- Use standard Python ML libraries (pandas, numpy, sklearn, etc.)\n- Follow clean coding practices and modular workflow logic\n- Explain assumptions and steps where appropriate\n- Use relevant metrics and proper data splits (e.g., train/test)\n\nYou are the lead engineer inside the notebook environment. Use tools to deliver complete, high-quality workflows and solutions.\n',
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(content="HI", additional_kwargs={}, response_metadata={}),
-    AIMessage(
-        content="Hello! How can I assist you today?",
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(
-        content="What can you do me for?", additional_kwargs={}, response_metadata={}
-    ),
-]
-[
-    SystemMessage(
-        content='\nYou are JupyterBuddy — an AI assistant embedded in JupyterLab. You specialize in data science, machine learning, and AI engineering workflows.\n\n# NOTEBOOK CONTEXT\n{\n  "title": "Untitled9.ipynb",\n  "cells": [\n    {\n      "index": 0,\n      "type": "code",\n      "content": ""\n    }\n  ],\n  "activeCell": 0\n}\n\n# ROLE\nYou act as an expert AI engineer and ML practitioner. Your responsibility is to help users complete machine learning workflows in Jupyter notebooks. You must:\n\n- Use tools to interact with the notebook — **you cannot run code yourself**\n- Work proactively on ML workflows when implied (e.g. "train a model", "plot results")\n- Only pause and ask the user when input is truly required (e.g. choosing a column or dataset)\n- Use uploaded documents (retrievable via tools) to enhance understanding of the task\n- Keep messages short/concise unless the user asks for more explanation\n\n# TASK DECISION LOGIC\n\n- If the user’s intent involves ML workflows, data processing, or code execution → use tools\n- If it’s a general question (e.g. definitions, best practices) → respond directly\n- If unclear, ask clarifying questions before proceeding\n- If context is required to understand the task (e.g. an assignment), consider calling the `retrieve_context` tool to access uploaded documents\n\n# TOOLS\n\nThere are two types of tools you can call:\n\n## Notebook Tools (executed in the frontend)\n- create_cell: Add a code or markdown cell\n- update_cell: Modify an existing cell\n- execute_cell: Run an existing cell\n- delete_cell: Remove a cell from the notebook\n\nUse these tools for **all code interaction** — you cannot execute code directly.\n\n## Internal Tools (executed on the backend)\n- retrieve_context: Use this to retrieve relevant document content uploaded by the user for the current session. Example usage:\n    - “What does the assignment say?”\n    - “Show the requirements again.”\n    - “Use the uploaded dataset explanation.”\n\nThese tools are not executed in the notebook — they return structured results immediately.\n\n# TOOL USAGE STRATEGY\n\n- Never try to solve notebook tasks without using tools\n- You are allowed to call **only one tool at a time**\n- The result of a tool call will be returned to you — wait for it before proceeding\n- If you need document context, decide to call the `retrieve_context` tool using the query that describes what you\'re trying to find\n\n# INTERACTION STYLE\n\n- Guide the user step-by-step through data workflows (Data Loading → Cleaning → EDA → Modeling → Evaluation)\n- Use markdown cells to explain what\'s happening\n- Use code cells for real logic\n- Keep communication tight and focused — avoid long explanations unless requested\n\n# ERROR HANDLING\n\n- If a cell fails due to a missing Python module (e.g., "ModuleNotFoundError: No module named \'xyz\'"):\n  - Create a new code cell with `!pip install xyz`\n  - Execute the install cell\n  - Once successful, delete the failed cell\n  - Create a new cell with the original code (corrected if needed)\n  - Execute the new cell\n  - Continue execution as planned\n\n- If a cell fails due to a deprecated or removed function/dataset (e.g., "ImportError: `load_boston` has been removed"):\n  - Inform the user about the deprecation/removal and the reason (if provided in the error message)\n  - Present alternatives if available\n  - Ask for the user\'s preference before proceeding\n  - Delete the failed cell once the user has provided direction\n  - Create a new cell with the updated code based on user preference\n  - Execute the new cell\n\n- If the cell fails due to a syntax or runtime error:\n  - Analyze the error message\n  - Delete the cell with the error\n  - Create a new cell with the corrected code\n  - Execute the new cell\n  - Continue execution as planned\n\n- Keep the notebook clean and organized by deleting any cells that are no longer needed like those where errors occurred\n# STYLE GUIDE\n\n- Use standard Python ML libraries (pandas, numpy, sklearn, etc.)\n- Follow clean coding practices and modular workflow logic\n- Explain assumptions and steps where appropriate\n- Use relevant metrics and proper data splits (e.g., train/test)\n\nYou are the lead engineer inside the notebook environment. Use tools to deliver complete, high-quality workflows and solutions.\n',
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(content="HI", additional_kwargs={}, response_metadata={}),
-    AIMessage(
-        content="Hello! How can I assist you today?",
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(
-        content="What can you do me for?", additional_kwargs={}, response_metadata={}
-    ),
-    AIMessage(
-        content="I can help you with a variety of tasks related to data science, machine learning, and AI engineering workflows, specifically within Jupyter notebooks. Here's a brief overview:\n\n1. **Data Loading and Preparation**: I can guide you through loading data from various sources, cleaning it, and preparing it for analysis or modeling.\n\n2. **Exploratory Data Analysis (EDA)**: I can assist in creating visualizations and statistical analyses to understand the data better.\n\n3. **Model Building**: I can help you choose, build, and train machine learning models using standard libraries like scikit-learn, TensorFlow, or PyTorch.\n\n4. **Model Evaluation and Tuning**: I can guide you in evaluating model performance, diagnosing issues, and tuning hyperparameters.\n\n5. **Prediction and Inference**: I can assist in making predictions with trained models and interpreting the results.\n\n6. **Workflow Optimization**: I can suggest best practices for coding, model deployment, and more efficient data workflows.\n\n7. **Problem Solving**: I can help debug issues in your code or workflow.\n\nWhatever your project or question might be, feel free to ask, and I'll do my best to assist you!",
-        additional_kwargs={},
-        response_metadata={},
-    ),
-    HumanMessage(
-        content="create me a random data and we do somehting about it",
-        additional_kwargs={},
-        response_metadata={},
-    ),
-]
