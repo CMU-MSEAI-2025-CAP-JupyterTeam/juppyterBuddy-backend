@@ -186,13 +186,16 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
         # Add summary for LLM to see
         brief_summary = rag_store.get_brief_summary(session_id)
         
-        user_input = f"""{user_input.strip()}
+        user_input = f"""
+        {len(successful_files)} instruction file(s) were uploaded: {', '.join(successful_files)}.
+        Treat them as authoritative guidance for this task.
+        Here’s a short preview to help you start reasoning effectively:
+        {brief_summary}
 
-    [Note: {len(successful_files)} instruction file(s) were uploaded: {', '.join(successful_files)}.
-    Treat them as authoritative. Here’s a quick preview:]
-    {brief_summary}
-    """
-
+        Please begin by summarizing what you understand from this context summary and let the user know the documents have been received. 
+        If clarification is needed, feel free to ask a brief follow-up question.
+        """
+        
     # Only send summary and stop if message is empty and no context was successfully uploaded
     if not base_input and not successful_files:
         if failed_files:
@@ -215,7 +218,6 @@ async def socket_handle_user_message(session_id: str, data: Dict[str, Any]):
     logger.info(f"[RAG] User input: {user_input}")
     updated_state = await agent.handle_user_message(state, user_input, notebook_ctx)
     session_states[session_id] = updated_state
-
 
 # Handle action result from frontend
 async def handle_action_result(session_id: str, data: Dict[str, Any]):
