@@ -1,0 +1,63 @@
+@startuml User Message Sequence
+!theme plain
+skinparam backgroundColor white
+skinparam sequenceArrowColor #666666
+skinparam sequenceParticipantBorderColor #999999
+
+title JupyterBuddy - User Message Sequence
+
+actor User
+participant "Chat Interface" as Chat
+participant "App Component" as App
+participant "WebSocket Handler" as WSHandler
+participant "JupyterBuddy Agent" as Agent
+participant "LLM" as LLM
+participant "Notebook" as Notebook
+
+User -> Chat: Enter message
+activate Chat
+Chat -> App: handleSendMessage()
+activate App
+
+App -> App: Get notebook context
+App -> WSHandler: Send user_message
+activate WSHandler
+
+WSHandler -> Agent: handle_user_message()
+activate Agent
+
+Agent -> LLM: Invoke with context + message history
+activate LLM
+LLM --> Agent: Response (text or tool call)
+deactivate LLM
+
+alt LLM Response contains Tool Call
+    Agent -> WSHandler: Send action request
+    WSHandler -> App: Send action request
+    App -> App: executeToolAction()
+    App -> Notebook: Execute tool (create/update/execute cell)
+    activate Notebook
+    Notebook --> App: Tool execution result
+    deactivate Notebook
+    App -> WSHandler: Send action_result
+    WSHandler -> Agent: handle_tool_result()
+    Agent -> LLM: Invoke with tool result
+    activate LLM
+    LLM --> Agent: Follow-up response
+    deactivate LLM
+    Agent -> WSHandler: Send text response
+    WSHandler -> App: Send text response
+else LLM Response is Text Only
+    Agent -> WSHandler: Send text response
+    WSHandler -> App: Send text response
+end
+
+App -> Chat: Update messages state
+deactivate App
+Chat -> User: Display response
+deactivate Chat
+
+deactivate Agent
+deactivate WSHandler
+
+@enduml

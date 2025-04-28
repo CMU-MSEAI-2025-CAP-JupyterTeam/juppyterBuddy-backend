@@ -1,0 +1,47 @@
+@startuml High-Level Architecture
+!theme plain
+skinparam componentStyle rectangle
+skinparam backgroundColor white
+skinparam ArrowColor #000000
+skinparam ComponentBorderColor #000000
+
+' title JupyterBuddy - High-Level Architecture
+
+package "Frontend (JupyterLab Extension)" {
+  [App Component] as FrontApp
+  [Chat Interface] as Chat
+  [Notebook Tools] as Tools
+  [File Upload] as FileUpload
+}
+
+package "Backend (FastAPI Server)" {
+  [WebSocket Handler] as WSHandler
+  [JupyterBuddy Agent] as Agent
+  [LLM Factory] as LLMFactory
+  [RAG Service] as RAG
+}
+
+cloud "LLM Provider" {
+  [OpenAI]
+  [Anthropic]
+  [Google AI]
+}
+
+database "Jupyter Notebook" as Notebook
+
+FrontApp --> Chat
+Chat --> FileUpload
+FrontApp --> Tools
+Tools -d-> Notebook
+
+FrontApp <-> WSHandler : WebSocket
+WSHandler <--> Agent
+Agent --> LLMFactory
+LLMFactory --> OpenAI
+LLMFactory --> Anthropic
+LLMFactory --> "Google AI"
+Agent --> RAG
+
+note right of RAG: FAISS
+
+@enduml

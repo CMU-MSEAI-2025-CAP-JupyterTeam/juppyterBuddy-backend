@@ -1,0 +1,69 @@
+@startuml Component Diagram
+!theme plain
+skinparam componentStyle rectangle
+skinparam backgroundColor white
+skinparam ArrowColor #666666
+skinparam ComponentBorderColor #999999
+
+title JupyterBuddy - Component Diagram
+
+package "Frontend" {
+  component "App.tsx" as App {
+    [Theme Management]
+    [WebSocket Client]
+    [Message History]
+    [Tool Execution]
+  }
+  
+  component "Chat.tsx" as Chat {
+    [Message Display]
+    [Input Handling]
+    [File Upload]
+  }
+  
+  component "MessageItem.tsx" as MessageItem
+  
+  component "jupyterbuddyTools" as JupyterTools {
+    [notebookHelpers.ts]
+    [tools.ts]
+  }
+}
+
+package "Backend" {
+  component "websocket.py" as WebSocket {
+    [Session Management]
+    [Message Routing]
+  }
+  
+  component "agent.py" as Agent {
+    [LangGraph State Machine]
+    [Tool Call Handling]
+    [Message Processing]
+  }
+  
+  component "llm.py" as LLM {
+    [LLM Factory]
+    [Provider Configuration]
+  }
+  
+  component "rag.py" as RAG {
+    [FAISS Index]
+    [Document Chunking]
+    [Vector Search]
+  }
+  
+  component "internalTools.py" as InternalTools {
+    [retrieve_context]
+  }
+}
+
+App --> Chat
+Chat --> MessageItem
+App --> JupyterTools
+App <..> WebSocket : WebSocket\nCommunication
+WebSocket --> Agent
+Agent --> LLM
+Agent --> RAG
+Agent --> InternalTools
+
+@enduml

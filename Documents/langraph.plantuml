@@ -1,0 +1,38 @@
+@startuml LangGraph State Machine
+!theme plain
+skinparam backgroundColor white
+skinparam stateBackgroundColor white
+skinparam stateBorderColor #000000
+skinparam stateArrowColor #000000
+
+' title JupyterBuddy - LangGraph State Machine
+
+state "Entry Point" as entry
+state "LLM" as llm
+state "Tool Call Validator" as validator
+state "Tool Execution" as tool
+state "End" as end
+
+entry -d-> llm
+llm -r-> validator : LLM generates response
+
+state validator {
+  state "Check Tool Calls" as check
+  state "Multiple Tool Calls" as multiple
+  state "Single Tool Call" as single
+  state "No Tool Calls" as none
+  
+  check --> none : No tools
+  check --> single : One tool
+  check --> multiple : Multiple tools
+  
+  multiple --> multiple : Retry counter > 0
+}
+
+validator -l-> tool : go_to_tool_call
+validator -l-> llm : retry
+validator -r-> end : end_agent_execution
+
+tool --> llm : Tool result returned
+
+@enduml
