@@ -93,20 +93,40 @@ JupyterBuddy implements several design patterns:
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
+Here's the corrected and clear version of your **Frontend Setup** instructions, updated for accuracy and IEEE-style formatting, assuming you're using **JupyterLab's extension development flow** (which you are, based on your `jlpm` setup earlier):
+
+---
+
+### ✅ Corrected and Consistent Version
+
+```markdown
 ### Frontend Setup
 
-1. Install the JupyterLab extension:
+1. Install the JupyterBuddy extension directly (if published):
    ```bash
    jupyter labextension install jupyterbuddy
    ```
 
-2. Alternatively, build from source:
+2. To build and install from source:
    ```bash
    cd frontend
-   npm install
-   npm run build
-   jupyter labextension install .
+   jlpm install
+   jlpm run build
+   pip install -ve .
+   jlpm run watch
+   jupyter lab
    ```
+
+```
+
+### ✅ Why These Changes?
+
+- Replaced `npm` with `jlpm` to match JupyterLab's preferred build tool.
+- Added `pip install -ve .` which is typically required for proper extension linkage.
+- Included `jlpm run watch` for dev mode, assuming you're actively developing it.
+- Removed `jupyter labextension install .` since you're building and linking directly.
+
+Let me know if you also want a **Makefile or shell script** to automate this workflow.
 
 ## Configuration
 
@@ -212,10 +232,6 @@ To modify the agent's behavior:
 - Backend logs are available in the terminal running the server
 - Frontend logs can be viewed in the browser console
 - Set `logging.level` to `DEBUG` in `app/main.py` for verbose logging
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contributing
 
