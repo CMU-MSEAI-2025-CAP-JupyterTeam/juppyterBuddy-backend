@@ -4,7 +4,6 @@
 
 JupyterBuddy is an AI-powered assistant that integrates directly into JupyterLab, enabling users to interact with their notebooks through natural language. It streamlines workflows for data scientists and ML engineers by handling tasks such as code execution, cell modification, and metadata retrieval.
 
-![JupyterBuddy Architecture](https://i.imgur.com/example.png)
 
 ## Features
 
@@ -93,9 +92,6 @@ JupyterBuddy implements several design patterns:
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-### ✅ Corrected and Consistent Version
-
-```markdown
 ### Frontend Setup
 
 1. Install the JupyterBuddy extension directly (if published):
