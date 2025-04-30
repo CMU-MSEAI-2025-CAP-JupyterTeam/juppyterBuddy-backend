@@ -93,10 +93,6 @@ JupyterBuddy implements several design patterns:
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-Here's the corrected and clear version of your **Frontend Setup** instructions, updated for accuracy and IEEE-style formatting, assuming you're using **JupyterLab's extension development flow** (which you are, based on your `jlpm` setup earlier):
-
----
-
 ### ✅ Corrected and Consistent Version
 
 ```markdown
@@ -116,8 +112,6 @@ Here's the corrected and clear version of your **Frontend Setup** instructions, 
    jlpm run watch
    jupyter lab
    ```
-
-```
 
 ### ✅ Why These Changes?
 
